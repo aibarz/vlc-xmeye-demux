@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: LGPL-2.1-or-later
+/* SPDX-License-Identifier: LGPL-2.1-or-later
  * XMEye proprietary recording demuxer for VLC 3.x
  */
 #ifdef HAVE_CONFIG_H
@@ -15,9 +15,7 @@
 #define XMEYE_MAX_PAYLOAD (64 * 1024 * 1024)
 #define XMEYE_FALLBACK_FPS 25
 
-typedef struct
-{
-    es_out_id_t *video_es;
+struct demux_sys_t`r`n{`r`n    es_out_id_t *video_es;
     decoder_t *packetizer;
     vlc_fourcc_t codec;
     vlc_tick_t next_dts;
@@ -35,8 +33,8 @@ vlc_module_begin()
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_DEMUX)
     set_capability("demux", 20)
-    add_float("xmeye-fps", 0.0, N_("Fallback frames per second"),
-              N_("Used when XMEye timestamps and bitstream timing do not provide a usable rate."), true)
+    add_float("xmeye-fps", 0.0, "Fallback frames per second",
+              "Used when XMEye timestamps and bitstream timing do not provide a usable rate.", true)
     set_callbacks(Open, Close)
     add_shortcut("xmeye")
 vlc_module_end()
@@ -358,4 +356,3 @@ static int Control(demux_t *d, int query, va_list args)
         return VLC_EGENERIC;
     return demux_vaControlHelper(d->s, 0, -1, 0, 1, query, args);
 }
-
