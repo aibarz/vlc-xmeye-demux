@@ -23,6 +23,7 @@ struct demux_sys_t
     vlc_tick_t next_dts;
     vlc_tick_t frame_duration;
     bool have_keyframe;
+    bool discontinuity_pending;
 };
 
 static int Open(vlc_object_t *);
@@ -209,6 +210,11 @@ static int read_marker(stream_t *s, uint8_t marker[4])
 static int send_video(demux_t *d, block_t *in)
 {
     demux_sys_t *sys = d->p_sys;
+    if (sys->discontinuity_pending)
+    {
+        in->i_flags |= BLOCK_FLAG_DISCONTINUITY;
+        sys->discontinuity_pending = false;
+    }
     in->i_dts = sys->next_dts;
     in->i_pts = VLC_TICK_INVALID;
     sys->next_dts += sys->frame_duration;
@@ -365,9 +371,37 @@ static int Demux(demux_t *d)
     return VLC_DEMUXER_SUCCESS;
 }
 
+static void ResetAfterSeek(demux_t *d)
+{
+    demux_sys_t *sys = d->p_sys;
+    sys->have_keyframe = false;
+    sys->discontinuity_pending = true;
+    if (sys->packetizer && sys->packetizer->pf_flush)
+        sys->packetizer->pf_flush(sys->packetizer);
+}
+
 static int Control(demux_t *d, int query, va_list args)
 {
+    if (query == DEMUX_SET_POSITION)
+    {
+        double position = va_arg(args, double);
+        uint64_t size = 0;
+        if (vlc_stream_GetSize(d->s, &size) != VLC_SUCCESS || size == 0)
+            return VLC_EGENERIC;
+
+        if (position < 0.0) position = 0.0;
+        if (position > 1.0) position = 1.0;
+        uint64_t offset = (uint64_t)(position * (double)size);
+
+        if (vlc_stream_Seek(d->s, offset) != VLC_SUCCESS)
+            return VLC_EGENERIC;
+
+        ResetAfterSeek(d);
+        return VLC_SUCCESS;
+    }
+
     if (query == DEMUX_SET_TIME)
         return VLC_EGENERIC;
+
     return demux_vaControlHelper(d->s, 0, -1, 0, 1, query, args);
 }
