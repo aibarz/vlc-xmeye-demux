@@ -11,9 +11,15 @@
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
+#include <vlc_atomic.h>
+#include <string.h>
 
 #define FILTER_PREFIX "xmeye2x-"
 
+#define ENABLED_TEXT N_("Temporal 2-to-1 enabled")
+#define ENABLED_LONGTEXT N_("Enable or bypass XMEye temporal frame accumulation without removing the filter from the chain.")
+#define ADAPTIVE_TEXT N_("Motion-adaptive accumulation")
+#define ADAPTIVE_LONGTEXT N_("Accumulate stable pixels across outputs and reset changed pixels to reduce ghosting.")
 #define STRENGTH_TEXT N_("Temporal accumulation strength")
 #define STRENGTH_LONGTEXT N_("Recursive temporal strength. 2 is mild; 4 is the recommended default; higher values denoise static areas more strongly.")
 #define THRESH_Y_TEXT N_("Luma motion threshold")
@@ -27,18 +33,21 @@ struct filter_sys_t
     picture_t *state;
     bool have_first;
     bool have_state;
-    int strength;
-    int threshold_y;
-    int threshold_c;
+    atomic_int enabled;
+    atomic_int adaptive;
+    atomic_int strength;
+    atomic_int threshold_y;
+    atomic_int threshold_c;
 };
 
 static int Create(vlc_object_t *);
 static void Destroy(vlc_object_t *);
 static picture_t *Filter(filter_t *, picture_t *);
 static void Flush(filter_t *);
+static int OptionCallback(vlc_object_t *, const char *, vlc_value_t, vlc_value_t, void *);
 
 static const char *const filter_options[] = {
-    "strength", "threshold-y", "threshold-c", NULL
+    "enabled", "adaptive", "strength", "threshold-y", "threshold-c", NULL
 };
 
 vlc_module_begin()
@@ -47,6 +56,8 @@ vlc_module_begin()
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VFILTER)
     set_capability("video filter", 0)
+    add_bool(FILTER_PREFIX "enabled", true, ENABLED_TEXT, ENABLED_LONGTEXT, false)
+    add_bool(FILTER_PREFIX "adaptive", true, ADAPTIVE_TEXT, ADAPTIVE_LONGTEXT, false)
     add_integer_with_range(FILTER_PREFIX "strength", 4, 2, 8,
                            STRENGTH_TEXT, STRENGTH_LONGTEXT, false)
     add_integer_with_range(FILTER_PREFIX "threshold-y", 12, 0, 64,
@@ -75,16 +86,31 @@ static int Create(vlc_object_t *obj)
         return VLC_EGENERIC;
     }
 
-    config_ChainParse(filter, FILTER_PREFIX, filter_options, filter->p_cfg);
-    sys->strength = VLC_CLIP(var_CreateGetInteger(filter, FILTER_PREFIX "strength"), 2, 8);
-    sys->threshold_y = VLC_CLIP(var_CreateGetInteger(filter, FILTER_PREFIX "threshold-y"), 0, 64);
-    sys->threshold_c = VLC_CLIP(var_CreateGetInteger(filter, FILTER_PREFIX "threshold-c"), 0, 64);
-
     filter->p_sys = sys;
+    config_ChainParse(filter, FILTER_PREFIX, filter_options, filter->p_cfg);
+
+    atomic_init(&sys->enabled,
+                var_CreateGetBoolCommand(filter, FILTER_PREFIX "enabled") ? 1 : 0);
+    atomic_init(&sys->adaptive,
+                var_CreateGetBoolCommand(filter, FILTER_PREFIX "adaptive") ? 1 : 0);
+    atomic_init(&sys->strength,
+                VLC_CLIP(var_CreateGetIntegerCommand(filter, FILTER_PREFIX "strength"), 2, 8));
+    atomic_init(&sys->threshold_y,
+                VLC_CLIP(var_CreateGetIntegerCommand(filter, FILTER_PREFIX "threshold-y"), 0, 64));
+    atomic_init(&sys->threshold_c,
+                VLC_CLIP(var_CreateGetIntegerCommand(filter, FILTER_PREFIX "threshold-c"), 0, 64));
+
+    var_AddCallback(filter, FILTER_PREFIX "enabled", OptionCallback, sys);
+    var_AddCallback(filter, FILTER_PREFIX "adaptive", OptionCallback, sys);
+    var_AddCallback(filter, FILTER_PREFIX "strength", OptionCallback, sys);
+    var_AddCallback(filter, FILTER_PREFIX "threshold-y", OptionCallback, sys);
+    var_AddCallback(filter, FILTER_PREFIX "threshold-c", OptionCallback, sys);
+
     filter->pf_video_filter = Filter;
     filter->pf_flush = Flush;
-    msg_Info(filter, "XMEye Temporal 2x enabled: strength=%d threshold-y=%d threshold-c=%d",
-             sys->strength, sys->threshold_y, sys->threshold_c);
+    msg_Info(filter, "XMEye Temporal 2x ready: enabled=%d adaptive=%d strength=%d threshold-y=%d threshold-c=%d",
+             atomic_load(&sys->enabled), atomic_load(&sys->adaptive), atomic_load(&sys->strength),
+             atomic_load(&sys->threshold_y), atomic_load(&sys->threshold_c));
     return VLC_SUCCESS;
 }
 
@@ -94,6 +120,13 @@ static void Destroy(vlc_object_t *obj)
     filter_sys_t *sys = filter->p_sys;
     if (!sys)
         return;
+
+    var_DelCallback(filter, FILTER_PREFIX "enabled", OptionCallback, sys);
+    var_DelCallback(filter, FILTER_PREFIX "adaptive", OptionCallback, sys);
+    var_DelCallback(filter, FILTER_PREFIX "strength", OptionCallback, sys);
+    var_DelCallback(filter, FILTER_PREFIX "threshold-y", OptionCallback, sys);
+    var_DelCallback(filter, FILTER_PREFIX "threshold-c", OptionCallback, sys);
+
     if (sys->first) picture_Release(sys->first);
     if (sys->state) picture_Release(sys->state);
     free(sys);
@@ -106,11 +139,46 @@ static void Flush(filter_t *filter)
     sys->have_state = false;
 }
 
+static int OptionCallback(vlc_object_t *obj, const char *name,
+                          vlc_value_t oldval, vlc_value_t newval, void *data)
+{
+    VLC_UNUSED(obj);
+    VLC_UNUSED(oldval);
+    filter_sys_t *sys = data;
+
+    if (!strcmp(name, FILTER_PREFIX "enabled"))
+    {
+        atomic_store(&sys->enabled, newval.b_bool ? 1 : 0);
+        sys->have_first = false;
+        sys->have_state = false;
+    }
+    else if (!strcmp(name, FILTER_PREFIX "adaptive"))
+    {
+        atomic_store(&sys->adaptive, newval.b_bool ? 1 : 0);
+        sys->have_state = false;
+    }
+    else if (!strcmp(name, FILTER_PREFIX "strength"))
+        atomic_store(&sys->strength, VLC_CLIP(newval.i_int, 2, 8));
+    else if (!strcmp(name, FILTER_PREFIX "threshold-y"))
+        atomic_store(&sys->threshold_y, VLC_CLIP(newval.i_int, 0, 64));
+    else if (!strcmp(name, FILTER_PREFIX "threshold-c"))
+        atomic_store(&sys->threshold_c, VLC_CLIP(newval.i_int, 0, 64));
+
+    return VLC_SUCCESS;
+}
+
 static picture_t *Filter(filter_t *filter, picture_t *pic)
 {
     filter_sys_t *sys = filter->p_sys;
     if (!pic)
         return NULL;
+
+    if (!atomic_load(&sys->enabled))
+    {
+        sys->have_first = false;
+        sys->have_state = false;
+        return pic;
+    }
 
     if (!sys->have_first)
     {
@@ -128,6 +196,11 @@ static picture_t *Filter(filter_t *filter, picture_t *pic)
         return NULL;
     }
 
+    const bool adaptive = atomic_load(&sys->adaptive) != 0;
+    const int strength = atomic_load(&sys->strength);
+    const int threshold_y = atomic_load(&sys->threshold_y);
+    const int threshold_c = atomic_load(&sys->threshold_c);
+
     const int planes = __MIN(out->i_planes,
                        __MIN(sys->first->i_planes,
                        __MIN(sys->state->i_planes, pic->i_planes)));
@@ -144,7 +217,7 @@ static picture_t *Filter(filter_t *filter, picture_t *pic)
         const int bytes = __MIN(dst->i_visible_pitch,
                           __MIN(a->i_visible_pitch,
                           __MIN(b->i_visible_pitch, old->i_visible_pitch)));
-        const int threshold = (p == Y_PLANE) ? sys->threshold_y : sys->threshold_c;
+        const int threshold = (p == Y_PLANE) ? threshold_y : threshold_c;
 
         for (int y = 0; y < lines; ++y)
         {
@@ -157,7 +230,7 @@ static picture_t *Filter(filter_t *filter, picture_t *pic)
             {
                 const unsigned pair = ((unsigned)pa[x] + (unsigned)pb[x] + 1u) >> 1;
 
-                if (!sys->have_state)
+                if (!adaptive || !sys->have_state)
                 {
                     pd[x] = (uint8_t)pair;
                     continue;
@@ -169,14 +242,12 @@ static picture_t *Filter(filter_t *filter, picture_t *pic)
                 if (diff <= threshold)
                 {
                     const unsigned weighted =
-                        (unsigned)(sys->strength - 1) * (unsigned)po[x] + pair;
-                    pd[x] = (uint8_t)((weighted + (unsigned)(sys->strength / 2)) /
-                                      (unsigned)sys->strength);
+                        (unsigned)(strength - 1) * (unsigned)po[x] + pair;
+                    pd[x] = (uint8_t)((weighted + (unsigned)(strength / 2)) /
+                                      (unsigned)strength);
                 }
                 else
-                {
                     pd[x] = (uint8_t)pair;
-                }
             }
         }
     }
