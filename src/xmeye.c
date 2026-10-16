@@ -15,7 +15,9 @@
 #define XMEYE_MAX_PAYLOAD (64 * 1024 * 1024)
 #define XMEYE_FALLBACK_FPS 25
 
-struct demux_sys_t`r`n{`r`n    es_out_id_t *video_es;
+struct demux_sys_t
+{
+    es_out_id_t *video_es;
     decoder_t *packetizer;
     vlc_fourcc_t codec;
     vlc_tick_t next_dts;
