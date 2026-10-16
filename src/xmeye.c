@@ -22,6 +22,7 @@ struct demux_sys_t
     vlc_fourcc_t codec;
     vlc_tick_t next_dts;
     vlc_tick_t frame_duration;
+    bool have_keyframe;
 };
 
 static int Open(vlc_object_t *);
@@ -294,6 +295,7 @@ static void Close(vlc_object_t *obj)
 
 static int Demux(demux_t *d)
 {
+    demux_sys_t *sys = d->p_sys;
     uint8_t marker[4];
     if (read_marker(d->s, marker) != VLC_SUCCESS)
         return VLC_DEMUXER_EOF;
@@ -338,6 +340,17 @@ static int Demux(demux_t *d)
 
     if (size == 0 || size > XMEYE_MAX_PAYLOAD)
         return VLC_DEMUXER_EOF;
+
+    /* XMEye exports can begin mid-GOP with FD inter frames. Do not feed
+       those to VLC before the first FC keyframe carrying VPS/SPS/PPS. */
+    if (marker[3] == 0xFC)
+        sys->have_keyframe = true;
+    else if (!sys->have_keyframe)
+    {
+        if (vlc_stream_Read(d->s, NULL, size) != (ssize_t)size)
+            return VLC_DEMUXER_EOF;
+        return VLC_DEMUXER_SUCCESS;
+    }
 
     block_t *block = block_Alloc(size);
     if (!block) return VLC_ENOMEM;
