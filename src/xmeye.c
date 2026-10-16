@@ -22,7 +22,7 @@ typedef struct
     vlc_fourcc_t codec;
     vlc_tick_t next_dts;
     vlc_tick_t frame_duration;
-} demux_sys_t;
+};
 
 static int Open(vlc_object_t *);
 static void Close(vlc_object_t *);
@@ -31,7 +31,7 @@ static int Control(demux_t *, int, va_list);
 
 vlc_module_begin()
     set_shortname("XMEye")
-    set_description(N_("XMEye DVR/NVR recording demuxer"))
+    set_description("XMEye DVR/NVR recording demuxer")
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_DEMUX)
     set_capability("demux", 20)
@@ -358,3 +358,4 @@ static int Control(demux_t *d, int query, va_list args)
         return VLC_EGENERIC;
     return demux_vaControlHelper(d->s, 0, -1, 0, 1, query, args);
 }
+
