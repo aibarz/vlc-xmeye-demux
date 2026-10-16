@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later
  * XMEye temporal 2-to-1 averaging filter for VLC 3.x
+ * Original concept and functional design: Álvaro Ibarz
+ * Copyright (C) 2026 Álvaro Ibarz
  */
 #ifdef HAVE_CONFIG_H
 # include "config.h"
@@ -10,11 +12,11 @@
 #include <vlc_filter.h>
 #include <vlc_picture.h>
 
-typedef struct
+struct filter_sys_t
 {
     picture_t *first;
     bool have_first;
-} filter_sys_t;
+};
 
 static int Create(vlc_object_t *);
 static void Destroy(vlc_object_t *);
