@@ -1,0 +1,16 @@
+﻿# Real recordings are never committed.
+samples/*
+!samples/README.md
+*.mkv
+*.mp4
+*.h264
+*.h265
+*.hevc
+*.dav
+*.bin
+*.dll
+*.o
+*.obj
+*.log
+build/
+.vscode/
