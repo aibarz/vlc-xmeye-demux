@@ -1,0 +1,44 @@
+name: build-grayguard-win64
+
+on:
+  push:
+    branches: [feature/gray-frame-guard]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate adaptive gray-frame guard
+        run: python3 tests/test_grayguard_synthetic.py
+
+      - name: Install MinGW cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 git
+
+      - name: Fetch VLC 3.0.24 headers and exports
+        run: |
+          git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc
+          printf 'LIBRARY libvlccore.dll\nEXPORTS\n' > libvlccore.def
+          cat vlc/src/libvlccore.sym >> libvlccore.def
+          x86_64-w64-mingw32-dlltool -D libvlccore.dll -d libvlccore.def -l libvlccore.dll.a
+
+      - name: Build XMEye Gray Guard VLC filter
+        run: |
+          x86_64-w64-mingw32-gcc \
+            -std=gnu11 -O2 -Wall -Wextra \
+            -D__PLUGIN__ -DMODULE_STRING=\"xmeyegrayguard\" \
+            -Ivlc/include \
+            -shared src/xmeye_grayguard.c libvlccore.dll.a \
+            -Wl,--no-undefined \
+            -o libxmeyegrayguard_plugin.dll
+          file libxmeyegrayguard_plugin.dll
+
+      - name: Upload grayguard filter
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxmeyegrayguard_plugin-win64
+          path: libxmeyegrayguard_plugin.dll
