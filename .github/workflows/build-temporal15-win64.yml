@@ -1,0 +1,52 @@
+name: build-temporal15-win64
+
+on:
+  push:
+    branches: [feature/deblock-filter]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate 4-to-3 cadence math
+        run: |
+          python3 - <<'PY'
+          src=[0.0,50.0,100.0,150.0]
+          out=[src[0], src[1]+(src[2]-src[1])/3.0, src[2]+2.0*(src[3]-src[2])/3.0]
+          steps=[out[i+1]-out[i] for i in range(2)]
+          assert abs(steps[0]-66.6666667) < 0.01
+          assert abs(steps[1]-66.6666667) < 0.01
+          print('cadence ok:', out)
+          PY
+
+      - name: Install MinGW cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 git
+
+      - name: Fetch VLC 3.0.24 headers and exports
+        run: |
+          git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc
+          printf 'LIBRARY libvlccore.dll\nEXPORTS\n' > libvlccore.def
+          cat vlc/src/libvlccore.sym >> libvlccore.def
+          x86_64-w64-mingw32-dlltool -D libvlccore.dll -d libvlccore.def -l libvlccore.dll.a
+
+      - name: Build XMEye Temporal 15fps VLC filter
+        run: |
+          x86_64-w64-mingw32-gcc \
+            -std=gnu11 -O2 -Wall -Wextra \
+            -D__PLUGIN__ -DMODULE_STRING=\"xmeye15\" \
+            -Ivlc/include \
+            -shared src/xmeye_temporal15.c libvlccore.dll.a \
+            -Wl,--no-undefined \
+            -o libxmeye15_plugin.dll
+          file libxmeye15_plugin.dll
+
+      - name: Upload temporal15 filter
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxmeye15_plugin-win64
+          path: libxmeye15_plugin.dll
