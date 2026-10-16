@@ -16,16 +16,16 @@
 
 #define FILTER_PREFIX "xmeye2x-"
 
-#define ENABLED_TEXT N_("Temporal 2-to-1 enabled")
-#define ENABLED_LONGTEXT N_("Enable or bypass XMEye temporal frame accumulation without removing the filter from the chain.")
-#define ADAPTIVE_TEXT N_("Motion-adaptive accumulation")
-#define ADAPTIVE_LONGTEXT N_("Accumulate stable pixels across outputs and reset changed pixels to reduce ghosting.")
-#define STRENGTH_TEXT N_("Temporal accumulation strength")
-#define STRENGTH_LONGTEXT N_("Recursive temporal strength. 2 is mild; 4 is the recommended default; higher values denoise static areas more strongly.")
-#define THRESH_Y_TEXT N_("Luma motion threshold")
-#define THRESH_Y_LONGTEXT N_("Maximum luma difference that is still considered temporally stable.")
-#define THRESH_C_TEXT N_("Chroma motion threshold")
-#define THRESH_C_LONGTEXT N_("Maximum chroma difference that is still considered temporally stable.")
+#define ENABLED_TEXT "Temporal 2-to-1 enabled"
+#define ENABLED_LONGTEXT "Enable or bypass XMEye temporal frame accumulation without removing the filter from the chain."
+#define ADAPTIVE_TEXT "Motion-adaptive accumulation"
+#define ADAPTIVE_LONGTEXT "Accumulate stable pixels across outputs and reset changed pixels to reduce ghosting."
+#define STRENGTH_TEXT "Temporal accumulation strength"
+#define STRENGTH_LONGTEXT "Recursive temporal strength. 2 is mild; 4 is the recommended default; higher values denoise static areas more strongly."
+#define THRESH_Y_TEXT "Luma motion threshold"
+#define THRESH_Y_LONGTEXT "Maximum luma difference that is still considered temporally stable."
+#define THRESH_C_TEXT "Chroma motion threshold"
+#define THRESH_C_LONGTEXT "Maximum chroma difference that is still considered temporally stable."
 
 struct filter_sys_t
 {
