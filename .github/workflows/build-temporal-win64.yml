@@ -1,0 +1,42 @@
+name: build-temporal-win64
+
+on:
+  push:
+    branches: [feature/temporal2x-filter]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 git
+
+      - name: Fetch VLC 3.0.24 headers and exports
+        run: |
+          git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc
+          printf 'LIBRARY libvlccore.dll\nEXPORTS\n' > libvlccore.def
+          cat vlc/src/libvlccore.sym >> libvlccore.def
+          x86_64-w64-mingw32-dlltool -D libvlccore.dll -d libvlccore.def -l libvlccore.dll.a
+
+      - name: Build XMEye Temporal 2x VLC filter
+        run: |
+          x86_64-w64-mingw32-gcc \
+            -std=gnu11 -O2 -Wall -Wextra \
+            -D__PLUGIN__ -DMODULE_STRING=\"xmeye2x\" \
+            -Ivlc/include \
+            -shared src/xmeye_temporal.c libvlccore.dll.a \
+            -Wl,--no-undefined \
+            -o libxmeye2x_plugin.dll
+          file libxmeye2x_plugin.dll
+          x86_64-w64-mingw32-objdump -p libxmeye2x_plugin.dll | grep -E 'DLL Name|vlc_entry' || true
+
+      - name: Upload temporal filter
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxmeye2x_plugin-win64
+          path: libxmeye2x_plugin.dll
