@@ -4,26 +4,27 @@
 -- Copyright (C) 2026 Álvaro Ibarz
 
 local dlg = nil
-local temporal_enabled = nil
-local adaptive_enabled = nil
-local strength = nil
-local threshold_y = nil
-local threshold_c = nil
+local profile = nil
+local block_size = nil
+local focus_mode = nil
+local focus_strength = nil
+local focus_activity = nil
+local focus_limit = nil
 local status = nil
 
-local DEFAULT_STRENGTH = 4
-local DEFAULT_THRESHOLD_Y = 12
-local DEFAULT_THRESHOLD_C = 8
-
-function descriptor()
+local function descriptor_values()
     return {
         title = "XMEye Tools",
-        version = "0.1.0",
+        version = "0.2.0",
         author = "Álvaro Ibarz",
-        shortdesc = "XMEye temporal and zoom controls",
-        description = "Live controls for the XMEye VLC plugins. Concept and functional design by Álvaro Ibarz.",
+        shortdesc = "XMEye enhancement, focus and zoom controls",
+        description = "Live controls for the XMEye VLC plugins. Original concept and functional design by Álvaro Ibarz.",
         capabilities = {}
     }
+end
+
+function descriptor()
+    return descriptor_values()
 end
 
 local function set_status(text)
@@ -50,94 +51,137 @@ local function set_live(vout, name, value)
     return true, nil
 end
 
-function apply_temporal()
+local function set_checked_filter(vout, name, value)
+    local ok, err = set_live(vout, name, value)
+    if not ok then
+        set_status("Error en " .. name .. ": " .. err)
+        return false
+    end
+    return true
+end
+
+local function selected_profile()
+    return tonumber(profile:get_value()) or 0
+end
+
+local function profile_text(p)
+    if p == 0 then return "ORIGINAL" end
+    if p == 1 then return "STATIC 2→1" end
+    if p == 2 then return "HYBRID 25" end
+    if p == 3 then return "HYBRID 50/50" end
+    if p == 4 then return "HYBRID 75" end
+    if p == 5 then return "MOTION MC" end
+    return "DESCONOCIDO"
+end
+
+function apply_profile()
     local vout = get_vout()
     if not vout then return end
 
-    local sy = tonumber(threshold_y:get_text())
-    local sc = tonumber(threshold_c:get_text())
-    local s = tonumber(strength:get_value()) or DEFAULT_STRENGTH
+    local p = selected_profile()
+    local bs = tonumber(block_size:get_value()) or 16
 
-    if not sy or sy < 0 or sy > 64 then
-        set_status("Umbral Y inválido: usa 0–64.")
-        return
-    end
-    if not sc or sc < 0 or sc > 64 then
-        set_status("Umbral C inválido: usa 0–64.")
-        return
-    end
+    -- One enhancement engine at a time. All modules remain loaded in the chain.
+    if not set_checked_filter(vout, "xmeye2x-enabled", p == 1) then return end
+    if not set_checked_filter(vout, "xmeyemc-enabled", p == 5) then return end
+    if not set_checked_filter(vout, "xmeyehybrid-enabled", p >= 2 and p <= 4) then return end
 
-    s = math.max(2, math.min(8, math.floor(s)))
-    sy = math.floor(sy)
-    sc = math.floor(sc)
+    -- Static 2→1 deliberately uses the non-recursive pair average.
+    set_live(vout, "xmeye2x-adaptive", false)
+    set_live(vout, "xmeye2x-strength", 2)
 
-    local values = {
-        { "xmeye2x-enabled", temporal_enabled:get_checked() },
-        { "xmeye2x-adaptive", adaptive_enabled:get_checked() },
-        { "xmeye2x-strength", s },
-        { "xmeye2x-threshold-y", sy },
-        { "xmeye2x-threshold-c", sc }
-    }
+    set_live(vout, "xmeyemc-block-size", bs)
+    set_live(vout, "xmeyehybrid-block-size", bs)
 
-    for _, item in ipairs(values) do
-        local ok, err = set_live(vout, item[1], item[2])
-        if not ok then
-            set_status("Error aplicando " .. item[1] .. ": " .. err)
-            return
-        end
-    end
+    if p == 2 then set_live(vout, "xmeyehybrid-focus", 25) end
+    if p == 3 then set_live(vout, "xmeyehybrid-focus", 50) end
+    if p == 4 then set_live(vout, "xmeyehybrid-focus", 75) end
 
-    local mode = temporal_enabled:get_checked() and "ON" or "OFF"
-    local adaptive = adaptive_enabled:get_checked() and "adaptativo" or "promedio simple"
-    set_status(string.format("Temporal %s · %s · fuerza %d · Y %d · C %d", mode, adaptive, s, sy, sc))
+    set_status("Perfil aplicado: " .. profile_text(p) .. " · bloque " .. tostring(bs) .. "×" .. tostring(bs))
 end
 
-function reset_temporal()
-    temporal_enabled:set_checked(true)
-    adaptive_enabled:set_checked(true)
-    threshold_y:set_text(tostring(DEFAULT_THRESHOLD_Y))
-    threshold_c:set_text(tostring(DEFAULT_THRESHOLD_C))
+local function focus_preset(mode)
+    if mode == 0 then return false, 0, 5, 8, "OFF" end
+    if mode == 1 then return true, 25, 6, 6, "LOW" end
+    if mode == 2 then return true, 40, 5, 9, "MEDIUM" end
+    if mode == 3 then return true, 60, 4, 12, "HIGH" end
+    return false, 0, 5, 8, "OFF"
+end
 
+function apply_focus()
     local vout = get_vout()
-    if vout then
-        set_live(vout, "xmeye2x-enabled", true)
-        set_live(vout, "xmeye2x-adaptive", true)
-        set_live(vout, "xmeye2x-strength", DEFAULT_STRENGTH)
-        set_live(vout, "xmeye2x-threshold-y", DEFAULT_THRESHOLD_Y)
-        set_live(vout, "xmeye2x-threshold-c", DEFAULT_THRESHOLD_C)
-    end
+    if not vout then return end
 
-    set_status("Valores temporales restablecidos: fuerza 4 · Y 12 · C 8")
+    local mode = tonumber(focus_mode:get_value()) or 0
+    local enabled, strength, activity, limit, name = focus_preset(mode)
+
+    -- Expert fields override preset when valid and non-empty.
+    local s = tonumber(focus_strength:get_text())
+    local a = tonumber(focus_activity:get_text())
+    local l = tonumber(focus_limit:get_text())
+    if s then strength = math.max(0, math.min(100, math.floor(s))) end
+    if a then activity = math.max(0, math.min(32, math.floor(a))) end
+    if l then limit = math.max(1, math.min(32, math.floor(l))) end
+
+    set_live(vout, "xmeyefocus-enabled", enabled)
+    set_live(vout, "xmeyefocus-strength", strength)
+    set_live(vout, "xmeyefocus-activity-threshold", activity)
+    set_live(vout, "xmeyefocus-correction-limit", limit)
+
+    set_status(string.format("Focus %s · fuerza %d · actividad %d · límite %d", name, strength, activity, limit))
+end
+
+function load_focus_preset()
+    local mode = tonumber(focus_mode:get_value()) or 0
+    local enabled, strength, activity, limit, name = focus_preset(mode)
+    focus_strength:set_text(tostring(strength))
+    focus_activity:set_text(tostring(activity))
+    focus_limit:set_text(tostring(limit))
+    set_status("Preset Focus preparado: " .. name .. " · pulsa Aplicar focus")
 end
 
 function activate()
     dlg = vlc.dialog("XMEye Tools")
 
-    dlg:add_label("Filtro temporal 2→1", 1, 1, 4, 1)
-    temporal_enabled = dlg:add_check_box("Activado", true, 1, 2, 2, 1)
-    adaptive_enabled = dlg:add_check_box("Acumulación adaptativa", true, 3, 2, 2, 1)
+    dlg:add_label("MEJORA TEMPORAL / MOVIMIENTO", 1, 1, 4, 1)
+    dlg:add_label("Perfil", 1, 2, 1, 1)
+    profile = dlg:add_dropdown(2, 2, 3, 1)
+    profile:add_value("Original — sin mejora temporal", 0)
+    profile:add_value("Static 2→1 — 10 fps, promedio por parejas", 1)
+    profile:add_value("Hybrid 25 — prioridad estática", 2)
+    profile:add_value("Hybrid 50/50 — equilibrado", 3)
+    profile:add_value("Hybrid 75 — prioridad movimiento", 4)
+    profile:add_value("Motion MC — solo movimiento", 5)
 
-    dlg:add_label("Fuerza temporal", 1, 3, 2, 1)
-    strength = dlg:add_dropdown(3, 3, 2, 1)
-    strength:add_value("4 — recomendado", 4)
-    strength:add_value("2 — suave", 2)
-    strength:add_value("3", 3)
-    strength:add_value("5", 5)
-    strength:add_value("6", 6)
-    strength:add_value("7", 7)
-    strength:add_value("8 — máximo", 8)
+    dlg:add_label("Bloque", 1, 3, 1, 1)
+    block_size = dlg:add_dropdown(2, 3, 1, 1)
+    block_size:add_value("16×16", 16)
+    block_size:add_value("8×8", 8)
+    block_size:add_value("24×24", 24)
+    block_size:add_value("32×32", 32)
+    dlg:add_button("Aplicar perfil", apply_profile, 3, 3, 2, 1)
 
-    dlg:add_label("Umbral luminancia Y (0–64)", 1, 4, 2, 1)
-    threshold_y = dlg:add_text_input(tostring(DEFAULT_THRESHOLD_Y), 3, 4, 2, 1)
+    dlg:add_label("CORRECCIÓN DE FOCO", 1, 5, 4, 1)
+    focus_mode = dlg:add_dropdown(1, 6, 2, 1)
+    focus_mode:add_value("OFF", 0)
+    focus_mode:add_value("LOW", 1)
+    focus_mode:add_value("MEDIUM", 2)
+    focus_mode:add_value("HIGH", 3)
+    dlg:add_button("Cargar preset", load_focus_preset, 3, 6, 2, 1)
 
-    dlg:add_label("Umbral color C (0–64)", 1, 5, 2, 1)
-    threshold_c = dlg:add_text_input(tostring(DEFAULT_THRESHOLD_C), 3, 5, 2, 1)
+    dlg:add_label("Fuerza 0–100", 1, 7, 1, 1)
+    focus_strength = dlg:add_text_input("25", 2, 7, 1, 1)
+    dlg:add_label("Actividad 0–32", 3, 7, 1, 1)
+    focus_activity = dlg:add_text_input("6", 4, 7, 1, 1)
 
-    dlg:add_button("Aplicar", apply_temporal, 1, 6, 2, 1)
-    dlg:add_button("Valores por defecto", reset_temporal, 3, 6, 2, 1)
+    dlg:add_label("Límite 1–32", 1, 8, 1, 1)
+    focus_limit = dlg:add_text_input("6", 2, 8, 1, 1)
+    dlg:add_button("Aplicar focus", apply_focus, 3, 8, 2, 1)
 
-    dlg:add_label("Zoom interactivo: se añadirá en el siguiente módulo xmeyezoom.", 1, 7, 4, 1)
-    status = dlg:add_label("Listo. Los cambios se aplican al vídeo activo.", 1, 8, 4, 1)
+    dlg:add_label("ZOOM", 1, 10, 4, 1)
+    dlg:add_label("xmeyezoom: en desarrollo — zoom fijo, centro X/Y y aumento configurables.", 1, 11, 4, 1)
+
+    status = dlg:add_label("Listo. Los cambios se aplican al vídeo activo.", 1, 13, 4, 1)
     dlg:show()
 end
 
