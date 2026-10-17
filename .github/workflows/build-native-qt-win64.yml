@@ -8,34 +8,34 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: registry.videolan.org/vlc-debian-win64-3.0:20260820114402
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch VLC 3.0.24
-        run: |
-          git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc
-
-      - name: Apply native XMEye panels patch
-        run: |
-          cd vlc
-          git apply --check ../vlc-patches/3.0.24/0001-xmeye-native-panels.patch
-          git apply ../vlc-patches/3.0.24/0001-xmeye-native-panels.patch
-
-      - name: Build VLC 3.0.24 Win64 with prebuilt contribs
-        run: |
-          cd vlc
-          extras/package/win32/build.sh -a x86_64 -p
-
-      - name: Collect Qt plugin
+      - name: Build VLC Qt plugin in VideoLAN Win64 image
         run: |
           mkdir -p out
-          QT_DLL=$(find vlc -type f -name 'libqt_plugin.dll' | head -n 1)
-          test -n "$QT_DLL"
-          echo "Qt plugin: $QT_DLL"
-          cp "$QT_DLL" out/libqt_plugin.dll
+          docker run --rm \
+            --user 0:0 \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            registry.videolan.org/vlc-debian-win64-3.0:20260820114402 \
+            bash -lc '
+              set -eux
+              rm -rf vlc-build
+              git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc-build
+              cd vlc-build
+              git apply --check ../vlc-patches/3.0.24/0001-xmeye-native-panels.patch
+              git apply ../vlc-patches/3.0.24/0001-xmeye-native-panels.patch
+              extras/package/win32/build.sh -a x86_64 -p
+              QT_DLL=$(find . -type f -name libqt_plugin.dll | head -n 1)
+              test -n "$QT_DLL"
+              echo "Qt plugin: $QT_DLL"
+              cp "$QT_DLL" /work/out/libqt_plugin.dll
+            '
+
+      - name: Record build metadata
+        run: |
           sha256sum out/libqt_plugin.dll > out/SHA256SUMS.txt
           printf 'VLC base: 3.0.24\nPatch: XMEye native controls + interactive zoom\n' > out/BUILD-INFO.txt
 
