@@ -42,3 +42,13 @@ The t520 currently has no native C toolchain (`gcc`, `clang`, `cl`, `cmake`, `me
 - DLL nueva probada sólo en el VLC portable, con cache de plugins regenerada y copia de seguridad del demux anterior.
 - Prueba sin salida visible (`vdummy`): las tres `Local_*.h264`, una `NVR1-out_*.h264` y una `4f34a*.h264` seleccionan `xmeye` y arrancan el decoder HEVC.
 - La instalación normal de VLC no se ha modificado con esta corrección todavía.
+
+## 2026-10-17 — integración XMEye validada
+
+- Se da por **válida** la integración XMEye para VLC 3.0.24 x64.
+- `libxmeye_plugin.dll` abre correctamente grabaciones XMEye nativas, incluidos `NVR1-out_*.h264`, `4f34a*.h264` y los `Local_*.h264` que empiezan a mitad de GOP.
+- `libavi_plugin.dll` parcheado detecta los AVI XMEye etiquetados como H.264 pero con payload HEVC y elimina la cabecera privada de 8 bytes de los paquetes clave.
+- En el ASUS, tras actualizar a VLC 3.0.24 x64 e instalar ambas DLL, NVR AVI, NVR nativo y `Local_*` reproducen imagen correctamente y **sin bloques grises**.
+- El HP T520 reproduce NVR_01 AVI con fluidez, pero los `Local_*` 2592x1944/25 fps HEVC exceden su margen de proceso: el reproductor oficial XMEye también reduce notablemente los FPS. Se considera una limitación de rendimiento del T520, no un fallo del formato ni del demux.
+- Baseline validado: `libxmeye_plugin.dll` commit `cd7af35` + compatibilidad AVI commit `8255dc7`.
+- A partir de este punto, cambios de zoom/filtros/UI deben desarrollarse sin alterar esta baseline de demux validada salvo regresión demostrada.

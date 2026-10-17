@@ -37,3 +37,21 @@ The demuxer must claim a stream only after validating multiple XMEye records and
 Initial compatibility target: VLC 3.0.24 x64 on Windows.
 
 See `docs/FORMAT.md`, `docs/VLC-INTEGRATION.md`, and `STATUS.md`.
+
+## Validated integration status — 2026-10-17
+
+The current Windows integration is considered **validated** on VLC 3.0.24 x64 after real-device playback tests.
+
+Validated paths:
+
+- Native XMEye `.h264` wrapper demux through `libxmeye_plugin.dll`.
+- XMEye AVI exports that advertise H.264 while carrying HEVC, through the patched `libavi_plugin.dll`.
+- Mid-GOP `Local_*.h264` exports whose first FC/VPS/SPS/PPS appears beyond the initial 256 KiB probe window.
+- Native frame-rate detection from XMEye timing records, including observed 8 fps and 25 fps streams.
+
+Playback was verified on a more capable ASUS system with VLC 3.0.24 x64: NVR AVI, NVR native XMEye recordings, and `Local_*` HEVC recordings all displayed correctly without grey-block corruption. The HP T520 remains performance-limited for the heavier 2592x1944/25 fps HEVC `Local_*` streams; this is treated as a hardware throughput limitation rather than a demux-format failure.
+
+The validated deployment baseline is the paired demux set:
+
+- `plugins\demux\libxmeye_plugin.dll`
+- patched `plugins\demux\libavi_plugin.dll`
