@@ -23,7 +23,7 @@ function descriptor()
         title = "XMEye Tools",
         version = "0.3.0",
         author = "Álvaro Ibarz",
-        shortdesc = "XMEye enhancement, focus and fixed zoom controls",
+        shortdesc = "XMEye Tools",
         description = "Live controls for the XMEye VLC plugins. Original concept and functional design by Álvaro Ibarz.",
         capabilities = {}
     }
