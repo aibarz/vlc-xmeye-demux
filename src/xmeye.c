@@ -104,11 +104,18 @@ typedef struct
     vlc_fourcc_t codec;
     unsigned valid_records;
     unsigned video_records;
+    float estimated_fps;
 } probe_result_t;
 
 static bool probe_xmeye(const uint8_t *p, size_t n, probe_result_t *out)
 {
     memset(out, 0, sizeof(*out));
+
+    uint32_t last_ts = 0;
+    unsigned last_ts_video = 0;
+    unsigned fps_frames = 0;
+    unsigned fps_seconds = 0;
+    bool have_ts = false;
 
     for (size_t i = 0; i + 16 <= n; )
     {
@@ -153,6 +160,27 @@ static bool probe_xmeye(const uint8_t *p, size_t n, probe_result_t *out)
 
         out->valid_records++;
 
+        if (type == 0xF9 && i + 12 <= n)
+        {
+            const uint32_t ts = le32(p + i + 8);
+            if (have_ts && ts > last_ts)
+            {
+                const uint32_t dt = ts - last_ts;
+                const unsigned df = out->video_records - last_ts_video;
+                /* Ignore long timestamp gaps: they represent missing/export gaps,
+                   not the instantaneous frame rate. 1-2 second intervals are
+                   stable on known XMEye variants (8, 20 and 25 fps). */
+                if (dt <= 2 && df > 0 && df <= 240)
+                {
+                    fps_frames += df;
+                    fps_seconds += dt;
+                }
+            }
+            last_ts = ts;
+            last_ts_video = out->video_records;
+            have_ts = true;
+        }
+
         if (type == 0xFC || type == 0xFD)
         {
             out->video_records++;
@@ -173,6 +201,9 @@ static bool probe_xmeye(const uint8_t *p, size_t n, probe_result_t *out)
         else
             break;
     }
+
+    if (fps_seconds >= 2)
+        out->estimated_fps = (float)fps_frames / (float)fps_seconds;
 
     return out->valid_records >= 2 && out->video_records >= 1 && out->codec != 0;
 }
@@ -285,6 +316,8 @@ static int Open(vlc_object_t *obj)
     sys->next_dts = VLC_TICK_0;
 
     float fps = var_CreateGetFloat(d, "xmeye-fps");
+    if (fps < 0.001f && probe.estimated_fps >= 1.0f && probe.estimated_fps <= 120.0f)
+        fps = probe.estimated_fps;
     if (fps < 0.001f) fps = XMEYE_FALLBACK_FPS;
     sys->frame_duration = (vlc_tick_t)((double)CLOCK_FREQ / fps);
 
@@ -303,8 +336,8 @@ static int Open(vlc_object_t *obj)
     d->pf_demux = Demux;
     d->pf_control = Control;
 
-    msg_Info(d, "XMEye recording detected, video codec=%4.4s, records=%u",
-             (char *)&sys->codec, probe.valid_records);
+    msg_Info(d, "XMEye recording detected, video codec=%4.4s, records=%u, fps=%.3f",
+             (char *)&sys->codec, probe.valid_records, fps);
     return VLC_SUCCESS;
 }
 
