@@ -38,3 +38,8 @@ La heurística anterior desplazaba un bit de la primera NAL después de 00 00 00
 - Para cada formato nuevo: documentar firma estructural (RIFF/FourCC/NAL/longitud y flags), añadir test de regresión, comparar con los AVI antiguos y HEVC validados y no tocar el demux estable hasta las pruebas.
 
 Una heurística no puede garantizar compatibilidad universal con variantes no observadas ni archivos dañados.
+## Inventario local auditado (2026-10-17)
+
+Se inspeccionaron cabeceras, sin imágenes ni subida de medios, de 19 archivos presentes en el banco local: 2 AVI antiguos H.264 con cabecera privada FD; 2 AVI modernos etiquetados H264 pero con VPS/SPS/PPS HEVC; 15 archivos propietarios .h264 con FC y cabecera VPS HEVC. Entre los 15 propietarios hay seis cuyo primer FC no está necesariamente en el byte 0; tres comienzan muy avanzado el GOP (primer FC aproximadamente a 771678, 1034658 y 1282508 bytes). Este inventario respalda los casos documentados, pero no representa todos los DVR/XMEye del mercado.
+
+Verificaciones automáticas sin extracción: 75 paquetes por AVI, cuatro AVI clasificados correctamente (2 H.264, 2 HEVC); reproducción decodificada de diagnóstico en VLC con salida virtual para un AVI de cada grupo.
