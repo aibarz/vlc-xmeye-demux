@@ -2,7 +2,7 @@ name: build-external-control-win64
 
 on:
   push:
-    branches: [feature/external-control]
+    branches: [feature/external-control, fix/xmeye-adjust-chain]
   workflow_dispatch:
 
 jobs:

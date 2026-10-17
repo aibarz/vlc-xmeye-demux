@@ -255,46 +255,128 @@ static char *chain_without(const char *chain, const char *name)
     return out;
 }
 
+/* Append a colon-delimited filter name without changing existing tokens.
+ * The caller owns the returned string. */
+static char *chain_append(const char *old, const char *name)
+{
+    const size_t a = strlen(old ? old : "");
+    const size_t b = strlen(name);
+    char *out = malloc(a + b + 2);
+    if (!out)
+        return NULL;
+    if (a)
+        snprintf(out, a + b + 2, "%s:%s", old, name);
+    else
+        snprintf(out, a + b + 2, "%s", name);
+    return out;
+}
+
+/* The VLC 3.0.24 Windows Qt UI explicitly places software adjust AFTER other
+ * filters (to avoid d3d* adjust mixed with software filters). Mirror that
+ * behavior for filters added through the external XMEye controller. */
+static char *adjust_last(const char *chain)
+{
+    if (!chain_has(chain, "adjust"))
+        return strdup(chain ? chain : "");
+
+    char *without = chain_without(chain, "adjust");
+    if (!without)
+        return NULL;
+    char *result = chain_append(without, "adjust");
+    free(without);
+    return result;
+}
+
+/* Write only if a chain actually changed. Redundant writes to video-filter
+ * force VLC to rebuild converters while video output/zoom are active. */
 static void set_filter(intf_thread_t *intf, const char *name, bool enabled)
 {
     playlist_t *playlist = pl_Get(intf);
     char *old = var_GetString(playlist, "video-filter");
-    if (old == NULL)
+    if (!old)
         old = strdup("");
+    if (!old)
+        return;
 
-    char *next = NULL;
-    if (enabled)
+    char *desired = NULL;
+    const bool has = chain_has(old, name);
+    if (enabled == has)
     {
-        if (chain_has(old, name))
-            next = strdup(old);
-        else
+        /* Preserve identity: a repeated click must not rebuild the vout. */
+        desired = strdup(old);
+    }
+    else if (enabled)
+    {
+        char *without_adjust = chain_without(old, "adjust");
+        if (without_adjust)
         {
-            size_t n = strlen(old) + strlen(name) + 2;
-            next = malloc(n);
-            if (next != NULL)
+            char *appended = chain_append(without_adjust, name);
+            if (appended)
             {
-                if (*old)
-                    snprintf(next, n, "%s:%s", old, name);
-                else
-                    snprintf(next, n, "%s", name);
+                desired = chain_has(old, "adjust")
+                    ? chain_append(appended, "adjust")
+                    : strdup(appended);
+                free(appended);
             }
+            free(without_adjust);
         }
     }
     else
-        next = chain_without(old, name);
-
-    if (next != NULL)
     {
-        var_SetString(playlist, "video-filter", next);
-        vout_thread_t *vout = current_vout(intf);
-        if (vout != NULL)
+        char *without = chain_without(old, name);
+        if (without)
         {
-            var_SetString(vout, "video-filter", next);
+            desired = adjust_last(without);
+            free(without);
+        }
+    }
+
+    if (desired)
+    {
+        if (strcmp(old, desired))
+            var_SetString(playlist, "video-filter", desired);
+
+        vout_thread_t *vout = current_vout(intf);
+        if (vout)
+        {
+            char *active = var_GetString(vout, "video-filter");
+            if (!active || strcmp(active, desired))
+                var_SetString(vout, "video-filter", desired);
+            free(active);
             vlc_object_release(vout);
         }
-        free(next);
+        free(desired);
     }
     free(old);
+}
+
+static void sync_filter_checkboxes(intf_thread_t *intf)
+{
+    if (!intf || !intf->p_sys || !intf->p_sys->window)
+        return;
+    playlist_t *playlist = pl_Get(intf);
+    char *active = var_GetString(playlist, "video-filter");
+    if (!active)
+        return;
+
+    static const struct { int id; const char *module; } filters[] = {
+        { ID_GATE, "xmeyegate" },
+        { ID_DEBLOCK, "xmeyedeblock" },
+        { ID_DECONV, "xmeyedeconv" },
+        { ID_GRAY, "xmeyegrayguard" },
+        { ID_FOCUS, "xmeyefocus" }
+    };
+    for (size_t i = 0; i < sizeof(filters) / sizeof(filters[0]); ++i)
+    {
+        HWND control = GetDlgItem(intf->p_sys->window, filters[i].id);
+        if (!control)
+            continue;
+        const WPARAM expected = chain_has(active, filters[i].module)
+            ? BST_CHECKED : BST_UNCHECKED;
+        if ((WPARAM)SendMessageW(control, BM_GETCHECK, 0, 0) != expected)
+            SendMessageW(control, BM_SETCHECK, expected, 0);
+    }
+    free(active);
 }
 
 static void set_option_int(intf_thread_t *intf, const char *name, int value)
@@ -617,6 +699,8 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (saved_topmost)
                 SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
             show_page(sys, saved_page);
+            sync_filter_checkboxes(intf);
+            SetTimer(hwnd, 1, 1500, NULL);
             SetEvent(sys->ready);
             return 0;
         }
@@ -676,6 +760,14 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             break;
         }
 
+        case WM_TIMER:
+            if (wp == 1)
+            {
+                sync_filter_checkboxes(intf);
+                return 0;
+            }
+            break;
+
         case WM_PAINT:
         {
             PAINTSTRUCT ps;
@@ -692,6 +784,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case WM_DESTROY:
             if (sys != NULL)
             {
+                KillTimer(hwnd, 1);
                 RECT wr;
                 if (GetWindowRect(hwnd, &wr))
                 {
