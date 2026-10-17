@@ -286,3 +286,15 @@ index 4562a0e..718f858 100644
      if( module_exists( "v4l2" ) )
      {
          ExtV4l2 *v4l2 = new ExtV4l2( p_intf, mainTabW );
+diff --git a/modules/gui/qt/dialogs/extended.hpp b/modules/gui/qt/dialogs/extended.hpp
+index 44e2086..3e8a1cd 100644
+--- a/modules/gui/qt/dialogs/extended.hpp
++++ b/modules/gui/qt/dialogs/extended.hpp
+@@ -40,6 +40,7 @@ public:
+         AUDIO_TAB = 0,
+         VIDEO_TAB,
+         SYNCHRO_TAB,
++        XMEYE_TAB,
+         V4L2_TAB
+     };
+     void showTab( int i );
