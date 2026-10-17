@@ -1,0 +1,44 @@
+name: build-staticgate-win64
+
+on:
+  push:
+    branches: [feature/static-temporal-gate]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate strict static-gate behavior
+        run: python3 tests/test_staticgate_synthetic.py
+
+      - name: Install MinGW cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 git
+
+      - name: Fetch VLC 3.0.24 headers and exports
+        run: |
+          git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc
+          printf 'LIBRARY libvlccore.dll\nEXPORTS\n' > libvlccore.def
+          cat vlc/src/libvlccore.sym >> libvlccore.def
+          x86_64-w64-mingw32-dlltool -D libvlccore.dll -d libvlccore.def -l libvlccore.dll.a
+
+      - name: Build XMEye Static Gate VLC filter
+        run: |
+          x86_64-w64-mingw32-gcc \
+            -std=gnu11 -O2 -Wall -Wextra \
+            -D__PLUGIN__ -DMODULE_STRING=\"xmeyegate\" \
+            -Ivlc/include \
+            -shared src/xmeye_staticgate.c libvlccore.dll.a \
+            -Wl,--no-undefined \
+            -o libxmeyegate_plugin.dll
+          file libxmeyegate_plugin.dll
+
+      - name: Upload static-gate filter
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxmeyegate_plugin-win64
+          path: libxmeyegate_plugin.dll
