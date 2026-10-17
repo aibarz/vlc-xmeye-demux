@@ -24,12 +24,13 @@ jobs:
               set -eux
               rm -rf vlc-build
               git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc-build
-              cp src/xmeye_control_win32.c vlc-build/modules/control/win_msg.c
+              cp src/xmeye_control_win32.c vlc-build/modules/control/xmeye_control_win32.c
+              printf "\nlibxmeyecontrol_plugin_la_SOURCES = control/xmeye_control_win32.c\nif HAVE_WIN32_DESKTOP\ncontrol_LTLIBRARIES += libxmeyecontrol_plugin.la\nendif\n" >> vlc-build/modules/control/Makefile.am
               cd vlc-build
               export VLC_PREBUILT_CONTRIBS_URL=https://artifacts.videolan.org/vlc-3.0/win64/vlc-contrib-x86_64-w64-mingw32-910cc9cada6080dd777fbafb2ebdd0c24f702c30.tar.zst
               python3 ../ci/add_external_control_preflight.py extras/package/win32/build.sh
               extras/package/win32/build.sh -a x86_64 -p
-              DLL=$(find . -type f -name libwin_msg_plugin.dll | head -n 1)
+              DLL=$(find . -type f -name libxmeyecontrol_plugin.dll | head -n 1)
               test -n "$DLL"
               echo "External control plugin: $DLL"
               x86_64-w64-mingw32-strip --strip-unneeded "$DLL" || true

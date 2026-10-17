@@ -13,7 +13,7 @@ replacement = (
     'make -C src -j$JOBS all\n'
     'make -C modules -j$JOBS module.rc.lo\n\n'
     'info "Compiling XMEye external control plugin only"\n'
-    'make -C modules -j$JOBS libwin_msg_plugin.la\n'
+    'make -C modules -j$JOBS libxmeyecontrol_plugin.la\n'
     'exit 0'
 )
 
