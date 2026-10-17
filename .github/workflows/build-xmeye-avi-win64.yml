@@ -2,7 +2,7 @@ name: build-xmeye-avi-win64
 
 on:
   push:
-    branches: [feature/xmeye-avi-wrapper]
+    branches: [feature/xmeye-avi-wrapper, fix/avi-hevc-false-positive]
   workflow_dispatch:
 
 jobs:
@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Regression tests for AVI HEVC signature
+        run: python3 tests/test_avi_classifier.py
       - name: Build patched AVI plugin only
         run: |
           mkdir -p out
