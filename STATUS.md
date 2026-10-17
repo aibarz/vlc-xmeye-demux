@@ -32,3 +32,13 @@ Three current private XMEye samples were scanned structurally without extraction
 ### Build environment
 
 The t520 currently has no native C toolchain (`gcc`, `clang`, `cl`, `cmake`, `meson`, `ninja` absent). Compilation should therefore use a controlled external/CI toolchain rather than burdening the thin client unnecessarily.
+
+## 2026-10-17 — probe mid-GOP corregido
+
+- Reproducido el fallo con `Local_*.h264`: VLC caía en el demux `ps` porque el probe XMEye de 256 KiB veía registros FD válidos pero no alcanzaba el primer FC con VPS/SPS/PPS.
+- Primer FC observado en las tres muestras Local: 771678, 1034658 y 1282508 bytes.
+- El probe es ahora adaptativo: 256 KiB normalmente y hasta 2 MiB sólo cuando la estructura ya parece XMEye pero falta confirmar el códec.
+- Commit de corrección: `9ab59ff` (`Extend XMEye probe for mid-GOP exports`). CI Win64: OK.
+- DLL nueva probada sólo en el VLC portable, con cache de plugins regenerada y copia de seguridad del demux anterior.
+- Prueba sin salida visible (`vdummy`): las tres `Local_*.h264`, una `NVR1-out_*.h264` y una `4f34a*.h264` seleccionan `xmeye` y arrancan el decoder HEVC.
+- La instalación normal de VLC no se ha modificado con esta corrección todavía.
