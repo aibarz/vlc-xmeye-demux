@@ -1,4 +1,4 @@
-﻿/* SPDX-License-Identifier: LGPL-2.1-or-later
+/* SPDX-License-Identifier: LGPL-2.1-or-later
  * XMEye proprietary recording demuxer for VLC 3.x
  */
 #ifdef HAVE_CONFIG_H
@@ -11,18 +11,21 @@
 #include <vlc_codec.h>
 #include <string.h>
 
-#define XMEYE_PROBE_BYTES (256 * 1024)
+#define XMEYE_PROBE_BYTES_INITIAL (256 * 1024)
+#define XMEYE_PROBE_BYTES_EXTENDED (2 * 1024 * 1024)
 #define XMEYE_MAX_PAYLOAD (64 * 1024 * 1024)
 #define XMEYE_FALLBACK_FPS 25
 
-typedef struct
+struct demux_sys_t
 {
     es_out_id_t *video_es;
     decoder_t *packetizer;
     vlc_fourcc_t codec;
     vlc_tick_t next_dts;
     vlc_tick_t frame_duration;
-} demux_sys_t;
+    bool have_keyframe;
+    bool discontinuity_pending;
+};
 
 static int Open(vlc_object_t *);
 static void Close(vlc_object_t *);
@@ -31,12 +34,12 @@ static int Control(demux_t *, int, va_list);
 
 vlc_module_begin()
     set_shortname("XMEye")
-    set_description(N_("XMEye DVR/NVR recording demuxer"))
+    set_description("XMEye DVR/NVR recording demuxer")
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_DEMUX)
     set_capability("demux", 20)
-    add_float("xmeye-fps", 0.0, N_("Fallback frames per second"),
-              N_("Used when XMEye timestamps and bitstream timing do not provide a usable rate."), true)
+    add_float("xmeye-fps", 0.0, "Fallback frames per second",
+              "Used when XMEye timestamps and bitstream timing do not provide a usable rate.", true)
     set_callbacks(Open, Close)
     add_shortcut("xmeye")
 vlc_module_end()
@@ -101,11 +104,18 @@ typedef struct
     vlc_fourcc_t codec;
     unsigned valid_records;
     unsigned video_records;
+    float estimated_fps;
 } probe_result_t;
 
 static bool probe_xmeye(const uint8_t *p, size_t n, probe_result_t *out)
 {
     memset(out, 0, sizeof(*out));
+
+    uint32_t last_ts = 0;
+    unsigned last_ts_video = 0;
+    unsigned fps_frames = 0;
+    unsigned fps_seconds = 0;
+    bool have_ts = false;
 
     for (size_t i = 0; i + 16 <= n; )
     {
@@ -150,6 +160,27 @@ static bool probe_xmeye(const uint8_t *p, size_t n, probe_result_t *out)
 
         out->valid_records++;
 
+        if (type == 0xF9 && i + 12 <= n)
+        {
+            const uint32_t ts = le32(p + i + 8);
+            if (have_ts && ts > last_ts)
+            {
+                const uint32_t dt = ts - last_ts;
+                const unsigned df = out->video_records - last_ts_video;
+                /* Ignore long timestamp gaps: they represent missing/export gaps,
+                   not the instantaneous frame rate. 1-2 second intervals are
+                   stable on known XMEye variants (8, 20 and 25 fps). */
+                if (dt <= 2 && df > 0 && df <= 240)
+                {
+                    fps_frames += df;
+                    fps_seconds += dt;
+                }
+            }
+            last_ts = ts;
+            last_ts_video = out->video_records;
+            have_ts = true;
+        }
+
         if (type == 0xFC || type == 0xFD)
         {
             out->video_records++;
@@ -170,6 +201,9 @@ static bool probe_xmeye(const uint8_t *p, size_t n, probe_result_t *out)
         else
             break;
     }
+
+    if (fps_seconds >= 2)
+        out->estimated_fps = (float)fps_frames / (float)fps_seconds;
 
     return out->valid_records >= 2 && out->video_records >= 1 && out->codec != 0;
 }
@@ -208,6 +242,11 @@ static int read_marker(stream_t *s, uint8_t marker[4])
 static int send_video(demux_t *d, block_t *in)
 {
     demux_sys_t *sys = d->p_sys;
+    if (sys->discontinuity_pending)
+    {
+        in->i_flags |= BLOCK_FLAG_DISCONTINUITY;
+        sys->discontinuity_pending = false;
+    }
     in->i_dts = sys->next_dts;
     in->i_pts = VLC_TICK_INVALID;
     sys->next_dts += sys->frame_duration;
@@ -245,12 +284,29 @@ static int Open(vlc_object_t *obj)
 {
     demux_t *d = (demux_t *)obj;
     const uint8_t *peek = NULL;
-    ssize_t got = vlc_stream_Peek(d->s, &peek, XMEYE_PROBE_BYTES);
+    ssize_t got = vlc_stream_Peek(d->s, &peek, XMEYE_PROBE_BYTES_INITIAL);
     if (got < 32)
         return VLC_EGENERIC;
 
     probe_result_t probe;
-    if (!probe_xmeye(peek, (size_t)got, &probe))
+    bool detected = probe_xmeye(peek, (size_t)got, &probe);
+
+    /* Some XMEye exports begin mid-GOP. They can contain many valid FD
+       records before the first FC keyframe carrying VPS/SPS/PPS. Avoid a
+       large read for normal files, but extend the probe when the container
+       structure is already clearly XMEye and only codec confirmation is
+       missing. */
+    if (!detected && probe.valid_records >= 2 && probe.video_records >= 1 &&
+        probe.codec == 0 && got >= XMEYE_PROBE_BYTES_INITIAL)
+    {
+        const uint8_t *extended = NULL;
+        ssize_t extended_got = vlc_stream_Peek(d->s, &extended,
+                                               XMEYE_PROBE_BYTES_EXTENDED);
+        if (extended_got > got)
+            detected = probe_xmeye(extended, (size_t)extended_got, &probe);
+    }
+
+    if (!detected)
         return VLC_EGENERIC;
 
     demux_sys_t *sys = calloc(1, sizeof(*sys));
@@ -260,6 +316,8 @@ static int Open(vlc_object_t *obj)
     sys->next_dts = VLC_TICK_0;
 
     float fps = var_CreateGetFloat(d, "xmeye-fps");
+    if (fps < 0.001f && probe.estimated_fps >= 1.0f && probe.estimated_fps <= 120.0f)
+        fps = probe.estimated_fps;
     if (fps < 0.001f) fps = XMEYE_FALLBACK_FPS;
     sys->frame_duration = (vlc_tick_t)((double)CLOCK_FREQ / fps);
 
@@ -278,8 +336,8 @@ static int Open(vlc_object_t *obj)
     d->pf_demux = Demux;
     d->pf_control = Control;
 
-    msg_Info(d, "XMEye recording detected, video codec=%4.4s, records=%u",
-             (char *)&sys->codec, probe.valid_records);
+    msg_Info(d, "XMEye recording detected, video codec=%4.4s, records=%u, fps=%.3f",
+             (char *)&sys->codec, probe.valid_records, fps);
     return VLC_SUCCESS;
 }
 
@@ -294,6 +352,7 @@ static void Close(vlc_object_t *obj)
 
 static int Demux(demux_t *d)
 {
+    demux_sys_t *sys = d->p_sys;
     uint8_t marker[4];
     if (read_marker(d->s, marker) != VLC_SUCCESS)
         return VLC_DEMUXER_EOF;
@@ -339,6 +398,17 @@ static int Demux(demux_t *d)
     if (size == 0 || size > XMEYE_MAX_PAYLOAD)
         return VLC_DEMUXER_EOF;
 
+    /* XMEye exports can begin mid-GOP with FD inter frames. Do not feed
+       those to VLC before the first FC keyframe carrying VPS/SPS/PPS. */
+    if (marker[3] == 0xFC)
+        sys->have_keyframe = true;
+    else if (!sys->have_keyframe)
+    {
+        if (vlc_stream_Read(d->s, NULL, size) != (ssize_t)size)
+            return VLC_DEMUXER_EOF;
+        return VLC_DEMUXER_SUCCESS;
+    }
+
     block_t *block = block_Alloc(size);
     if (!block) return VLC_ENOMEM;
     if (read_exact(d->s, block->p_buffer, size) != VLC_SUCCESS)
@@ -352,9 +422,37 @@ static int Demux(demux_t *d)
     return VLC_DEMUXER_SUCCESS;
 }
 
+static void ResetAfterSeek(demux_t *d)
+{
+    demux_sys_t *sys = d->p_sys;
+    sys->have_keyframe = false;
+    sys->discontinuity_pending = true;
+    if (sys->packetizer && sys->packetizer->pf_flush)
+        sys->packetizer->pf_flush(sys->packetizer);
+}
+
 static int Control(demux_t *d, int query, va_list args)
 {
+    if (query == DEMUX_SET_POSITION)
+    {
+        double position = va_arg(args, double);
+        uint64_t size = 0;
+        if (vlc_stream_GetSize(d->s, &size) != VLC_SUCCESS || size == 0)
+            return VLC_EGENERIC;
+
+        if (position < 0.0) position = 0.0;
+        if (position > 1.0) position = 1.0;
+        uint64_t offset = (uint64_t)(position * (double)size);
+
+        if (vlc_stream_Seek(d->s, offset) != VLC_SUCCESS)
+            return VLC_EGENERIC;
+
+        ResetAfterSeek(d);
+        return VLC_SUCCESS;
+    }
+
     if (query == DEMUX_SET_TIME)
         return VLC_EGENERIC;
+
     return demux_vaControlHelper(d->s, 0, -1, 0, 1, query, args);
 }
