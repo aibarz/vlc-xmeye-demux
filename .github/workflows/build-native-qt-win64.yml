@@ -27,6 +27,8 @@ jobs:
               cd vlc-build
               git apply --check ../vlc-patches/3.0.24/0001-xmeye-native-panels.patch
               git apply ../vlc-patches/3.0.24/0001-xmeye-native-panels.patch
+              export VLC_PREBUILT_CONTRIBS_URL=https://artifacts.videolan.org/vlc-3.0/win64/vlc-contrib-x86_64-w64-mingw32-910cc9cada6080dd777fbafb2ebdd0c24f702c30.tar.zst
+              echo "Using prebuilt contribs: $VLC_PREBUILT_CONTRIBS_URL"
               extras/package/win32/build.sh -a x86_64 -p
               QT_DLL=$(find . -type f -name libqt_plugin.dll | head -n 1)
               test -n "$QT_DLL"
