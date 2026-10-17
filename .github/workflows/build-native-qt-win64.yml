@@ -34,7 +34,7 @@ jobs:
               QT_DLL=$(find . -type f -name libqt_plugin.dll | head -n 1)
               test -n "$QT_DLL"
               echo "Qt plugin: $QT_DLL"
-              cp "$QT_DLL" /work/out/libqt_plugin.dll
+              mv "$QT_DLL" /work/out/libqt_plugin.dll
             '
 
       - name: Record build metadata
