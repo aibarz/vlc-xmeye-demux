@@ -66,7 +66,7 @@ enum
     ID_CREDIT
 };
 
-typedef struct
+struct intf_sys_t
 {
     HWND window;
     HANDLE ready;
@@ -79,7 +79,7 @@ typedef struct
     HWND status;
     HWND credit;
     HFONT credit_font;
-} intf_sys_t;
+};
 
 static void add_page_control(HWND *list, int *count, HWND control)
 {
