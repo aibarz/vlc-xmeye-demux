@@ -12,7 +12,7 @@ replacement = (
     'make -C compat -j$JOBS all\n'
     'make -C src -j$JOBS all\n'
     'make -C modules -j$JOBS module.rc.lo\n'
-    'UI_HEADERS=$(grep -o "gui/qt/ui/[A-Za-z0-9_./-]*\\.h" modules/gui/qt/Makefile.am | sort -u | tr "\\n" " ")\n'
+    'UI_HEADERS=$(grep -o "gui/qt/ui/[A-Za-z0-9_./-]*\\.h" ../modules/gui/qt/Makefile.am | sort -u | tr "\\n" " ")\n'
     'make -C modules -j$JOBS $UI_HEADERS\n\n'
     'info "Compiling XMEye Qt preflight"\n'
     'make -C modules -j$JOBS gui/qt/dialogs/libqt_plugin_la-extended.lo\n\n'
