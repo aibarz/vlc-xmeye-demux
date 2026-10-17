@@ -18,6 +18,7 @@
 #include <vlc_vout.h>
 
 #include <windows.h>
+#include <shellapi.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,7 +79,9 @@ struct intf_sys_t
     int zoom_count;
     HWND status;
     HWND credit;
+    HWND legend;
     HFONT credit_font;
+    HFONT legend_font;
 };
 
 static void add_page_control(HWND *list, int *count, HWND control)
@@ -91,6 +94,33 @@ static void set_default_font(HWND h)
 {
     if (h != NULL)
         SendMessage(h, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+}
+
+static void settings_path(wchar_t *path, size_t count)
+{
+    wchar_t appdata[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+    if (n > 0 && n < MAX_PATH)
+        _snwprintf(path, count - 1, L"%s\\vlc\\xmeye-control.ini", appdata);
+    else
+        _snwprintf(path, count - 1, L"xmeye-control.ini");
+    path[count - 1] = 0;
+}
+
+static int load_setting(const wchar_t *key, int fallback)
+{
+    wchar_t path[MAX_PATH];
+    settings_path(path, MAX_PATH);
+    return (int)GetPrivateProfileIntW(L"window", key, fallback, path);
+}
+
+static void save_setting(const wchar_t *key, int value)
+{
+    wchar_t path[MAX_PATH], text[32];
+    settings_path(path, MAX_PATH);
+    _snwprintf(text, 31, L"%d", value);
+    text[31] = 0;
+    WritePrivateProfileStringW(L"window", key, text, path);
 }
 
 static HWND make_static(HWND parent, int x, int y, int w, int h, const wchar_t *text, int id)
@@ -129,8 +159,8 @@ static void add_labeled_edit(HWND parent, HWND *list, int *count,
                              int x, int y, const wchar_t *label,
                              const wchar_t *value, int id)
 {
-    add_page_control(list, count, make_static(parent, x, y + 3, 112, 22, label, 0));
-    add_page_control(list, count, make_edit(parent, x + 112, y, 62, 24, value, id));
+    add_page_control(list, count, make_static(parent, x, y + 3, 142, 22, label, 0));
+    add_page_control(list, count, make_edit(parent, x + 144, y, 48, 24, value, id));
 }
 
 static int clamp_int(int v, int lo, int hi)
@@ -420,43 +450,43 @@ static void create_adjust_page(HWND hwnd, intf_sys_t *sys)
 
     add_page_control(sys->adjust, &sys->adjust_count,
         make_button(hwnd, 24, y, 142, 26, L"Static Gate V2", ID_GATE, BS_AUTOCHECKBOX));
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Bloque", L"16", ID_GATE_BLOCK);
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Δ muestra", L"4", ID_GATE_MOTION);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Bloque [8,32] {16}", L"16", ID_GATE_BLOCK);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Δ muestra [1,32] {4}", L"4", ID_GATE_MOTION);
     y += 38;
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"% cambiado", L"8", ID_GATE_CHANGED);
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Peso anterior %", L"50", ID_GATE_PREV);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"% cambio [0,50] {8}", L"8", ID_GATE_CHANGED);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Peso ant.% [0,60] {50}", L"50", ID_GATE_PREV);
 
     y += 48;
     add_page_control(sys->adjust, &sys->adjust_count,
         make_button(hwnd, 24, y, 142, 26, L"Deblock", ID_DEBLOCK, BS_AUTOCHECKBOX));
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Grid", L"8", ID_DB_GRID);
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Umbral", L"8", ID_DB_THR);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Grid [4,32] {8}", L"8", ID_DB_GRID);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Umbral [1,32] {8}", L"8", ID_DB_THR);
     y += 38;
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Fuerza %", L"35", ID_DB_STRENGTH);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Fuerza % [0,100] {35}", L"35", ID_DB_STRENGTH);
 
     y += 48;
     add_page_control(sys->adjust, &sys->adjust_count,
         make_button(hwnd, 24, y, 142, 26, L"Deconv", ID_DECONV, BS_AUTOCHECKBOX));
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Fuerza %", L"30", ID_DC_STRENGTH);
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Umbral", L"5", ID_DC_THR);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Fuerza % [0,100] {30}", L"30", ID_DC_STRENGTH);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Umbral [0,32] {5}", L"5", ID_DC_THR);
     y += 38;
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Límite", L"5", ID_DC_LIMIT);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Límite [1,32] {5}", L"5", ID_DC_LIMIT);
 
     y += 48;
     add_page_control(sys->adjust, &sys->adjust_count,
         make_button(hwnd, 24, y, 142, 26, L"Gray Guard", ID_GRAY, BS_AUTOCHECKBOX));
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Paso", L"8", ID_GRAY_STEP);
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Actividad", L"3", ID_GRAY_ACTIVITY);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Paso [2,32] {8}", L"8", ID_GRAY_STEP);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Actividad [0,32] {3}", L"3", ID_GRAY_ACTIVITY);
     y += 38;
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Ratio %", L"20", ID_GRAY_RATIO);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Ratio % [5,60] {20}", L"20", ID_GRAY_RATIO);
 
     y += 48;
     add_page_control(sys->adjust, &sys->adjust_count,
         make_button(hwnd, 24, y, 142, 26, L"Focus", ID_FOCUS, BS_AUTOCHECKBOX));
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Fuerza %", L"25", ID_FOCUS_STRENGTH);
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Actividad", L"6", ID_FOCUS_ACTIVITY);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Fuerza % [0,100] {25}", L"25", ID_FOCUS_STRENGTH);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 390, y, L"Actividad [0,32] {6}", L"6", ID_FOCUS_ACTIVITY);
     y += 38;
-    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Límite", L"6", ID_FOCUS_LIMIT);
+    add_labeled_edit(hwnd, sys->adjust, &sys->adjust_count, 190, y, L"Límite [1,32] {6}", L"6", ID_FOCUS_LIMIT);
 
     add_page_control(sys->adjust, &sys->adjust_count,
         make_button(hwnd, 500, 486, 156, 30, L"Aplicar valores", ID_APPLY_VALUES, BS_PUSHBUTTON));
@@ -471,17 +501,17 @@ static void create_zoom_page(HWND hwnd, intf_sys_t *sys)
         make_button(hwnd, 24, 466, 112, 26, L"Zoom activo", ID_ZOOM_ACTIVE, BS_AUTOCHECKBOX));
     SendMessage(GetDlgItem(hwnd, ID_ZOOM_ACTIVE), BM_SETCHECK, BST_CHECKED, 0);
 
-    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 150, 466, L"Zoom %", L"200", ID_ZOOM_VALUE);
-    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 350, 466, L"Centro X %", L"50", ID_ZOOM_X);
-    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 550, 466, L"Y %", L"50", ID_ZOOM_Y);
+    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 150, 466, L"Zoom % [100,800] {200}", L"200", ID_ZOOM_VALUE);
+    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 365, 466, L"Centro X [0,100] {50}", L"50", ID_ZOOM_X);
+    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 580, 466, L"Centro Y [0,100] {50}", L"50", ID_ZOOM_Y);
 
-    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 24, 504, L"Fuente W", L"2592", ID_SOURCE_W);
-    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 224, 504, L"Fuente H", L"1944", ID_SOURCE_H);
+    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 24, 504, L"Fuente W [16,10000] {2592}", L"2592", ID_SOURCE_W);
+    add_labeled_edit(hwnd, sys->zoom, &sys->zoom_count, 270, 504, L"Fuente H [16,10000] {1944}", L"1944", ID_SOURCE_H);
 
     add_page_control(sys->zoom, &sys->zoom_count,
-        make_button(hwnd, 430, 504, 110, 28, L"Centrar", ID_ZOOM_CENTER, BS_PUSHBUTTON));
+        make_button(hwnd, 510, 504, 110, 28, L"Centrar", ID_ZOOM_CENTER, BS_PUSHBUTTON));
     add_page_control(sys->zoom, &sys->zoom_count,
-        make_button(hwnd, 550, 504, 110, 28, L"Aplicar zoom", ID_ZOOM_APPLY, BS_DEFPUSHBUTTON));
+        make_button(hwnd, 630, 504, 130, 28, L"Aplicar zoom", ID_ZOOM_APPLY, BS_DEFPUSHBUTTON));
 }
 
 static void paint_zoom_preview(intf_sys_t *sys, HDC dc)
@@ -489,7 +519,7 @@ static void paint_zoom_preview(intf_sys_t *sys, HDC dc)
     if (sys->page != 1)
         return;
 
-    RECT r = {24, 98, 660, 438};
+    RECT r = {24, 98, 780, 438};
     HBRUSH bg = CreateSolidBrush(RGB(68, 68, 68));
     FillRect(dc, &r, bg);
     DeleteObject(bg);
@@ -560,18 +590,33 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             create_adjust_page(hwnd, sys);
             create_zoom_page(hwnd, sys);
 
-            sys->status = make_static(hwnd, 24, 548, 620, 24,
+            sys->status = make_static(hwnd, 24, 548, 756, 24,
                                       L"Listo. No es necesario cargar un vídeo para probar la interfaz.",
                                       ID_STATUS);
-            sys->credit = make_static(hwnd, 410, 574, 245, 20,
-                                      L"\u00C1lvaro Ibarz \u00B7 github.com/aibarz", ID_CREDIT);
-            sys->credit_font = CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            sys->legend = make_static(hwnd, 24, 576, 390, 18,
+                                      L"[min,max] rango permitido · {x} valor por defecto", 0);
+            sys->credit = CreateWindowExW(0, L"STATIC",
+                                      L"Álvaro Ibarz · github.com/aibarz",
+                                      WS_CHILD | WS_VISIBLE | SS_NOTIFY | SS_RIGHT,
+                                      500, 574, 280, 20, hwnd, (HMENU)(INT_PTR)ID_CREDIT,
+                                      GetModuleHandleW(NULL), NULL);
+            sys->legend_font = CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                            DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+            sys->credit_font = CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, TRUE, FALSE,
+                                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                           DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+            SendMessage(sys->legend, WM_SETFONT, (WPARAM)sys->legend_font, TRUE);
             SendMessage(sys->credit, WM_SETFONT, (WPARAM)sys->credit_font, TRUE);
 
-            show_page(sys, 0);
+            int saved_page = clamp_int(load_setting(L"page", 0), 0, 1);
+            bool saved_topmost = load_setting(L"topmost", 0) != 0;
+            SendMessage(GetDlgItem(hwnd, ID_TOPMOST), BM_SETCHECK, saved_topmost ? BST_CHECKED : BST_UNCHECKED, 0);
+            if (saved_topmost)
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            show_page(sys, saved_page);
             SetEvent(sys->ready);
             return 0;
         }
@@ -587,6 +632,12 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 bool on = checked(hwnd, ID_TOPMOST);
                 SetWindowPos(hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST,
                              0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                return 0;
+            }
+
+            if (id == ID_CREDIT && HIWORD(wp) == STN_CLICKED)
+            {
+                ShellExecuteW(hwnd, L"open", L"https://github.com/aibarz", NULL, NULL, SW_SHOWNORMAL);
                 return 0;
             }
 
@@ -641,11 +692,24 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case WM_DESTROY:
             if (sys != NULL)
             {
+                RECT wr;
+                if (GetWindowRect(hwnd, &wr))
+                {
+                    save_setting(L"x", wr.left);
+                    save_setting(L"y", wr.top);
+                }
+                save_setting(L"page", sys->page);
+                save_setting(L"topmost", checked(hwnd, ID_TOPMOST) ? 1 : 0);
                 sys->window = NULL;
                 if (sys->credit_font != NULL)
                 {
                     DeleteObject(sys->credit_font);
                     sys->credit_font = NULL;
+                }
+                if (sys->legend_font != NULL)
+                {
+                    DeleteObject(sys->legend_font);
+                    sys->legend_font = NULL;
                 }
             }
             PostQuitMessage(0);
@@ -672,12 +736,27 @@ static void *UiThread(void *opaque)
     wc.lpszClassName = L"VLCXMEyeControlWindow";
     RegisterClassExW(&wc);
 
+    int wx = load_setting(L"x", CW_USEDEFAULT);
+    int wy = load_setting(L"y", CW_USEDEFAULT);
+    if (wx != CW_USEDEFAULT && wy != CW_USEDEFAULT)
+    {
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (wx < vx - 700 || wx > vx + vw - 80 || wy < vy - 500 || wy > vy + vh - 40)
+        {
+            wx = CW_USEDEFAULT;
+            wy = CW_USEDEFAULT;
+        }
+    }
+
     HWND window = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         wc.lpszClassName,
         L"XMEye Control",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 700, 640,
+        wx, wy, 820, 640,
         NULL, NULL, instance, intf);
 
     if (window == NULL)
