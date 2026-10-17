@@ -11,7 +11,8 @@
 #include <vlc_codec.h>
 #include <string.h>
 
-#define XMEYE_PROBE_BYTES (256 * 1024)
+#define XMEYE_PROBE_BYTES_INITIAL (256 * 1024)
+#define XMEYE_PROBE_BYTES_EXTENDED (2 * 1024 * 1024)
 #define XMEYE_MAX_PAYLOAD (64 * 1024 * 1024)
 #define XMEYE_FALLBACK_FPS 25
 
@@ -252,12 +253,29 @@ static int Open(vlc_object_t *obj)
 {
     demux_t *d = (demux_t *)obj;
     const uint8_t *peek = NULL;
-    ssize_t got = vlc_stream_Peek(d->s, &peek, XMEYE_PROBE_BYTES);
+    ssize_t got = vlc_stream_Peek(d->s, &peek, XMEYE_PROBE_BYTES_INITIAL);
     if (got < 32)
         return VLC_EGENERIC;
 
     probe_result_t probe;
-    if (!probe_xmeye(peek, (size_t)got, &probe))
+    bool detected = probe_xmeye(peek, (size_t)got, &probe);
+
+    /* Some XMEye exports begin mid-GOP. They can contain many valid FD
+       records before the first FC keyframe carrying VPS/SPS/PPS. Avoid a
+       large read for normal files, but extend the probe when the container
+       structure is already clearly XMEye and only codec confirmation is
+       missing. */
+    if (!detected && probe.valid_records >= 2 && probe.video_records >= 1 &&
+        probe.codec == 0 && got >= XMEYE_PROBE_BYTES_INITIAL)
+    {
+        const uint8_t *extended = NULL;
+        ssize_t extended_got = vlc_stream_Peek(d->s, &extended,
+                                               XMEYE_PROBE_BYTES_EXTENDED);
+        if (extended_got > got)
+            detected = probe_xmeye(extended, (size_t)extended_got, &probe);
+    }
+
+    if (!detected)
         return VLC_EGENERIC;
 
     demux_sys_t *sys = calloc(1, sizeof(*sys));
