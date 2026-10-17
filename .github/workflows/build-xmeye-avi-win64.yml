@@ -1,0 +1,42 @@
+name: build-xmeye-avi-win64
+
+on:
+  push:
+    branches: [feature/xmeye-avi-wrapper]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build patched AVI plugin only
+        run: |
+          mkdir -p out
+          docker run --rm \
+            --user 0:0 \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            registry.videolan.org/vlc-debian-win64-3.0:20260820114402 \
+            bash -lc '
+              set -eux
+              rm -rf vlc-build
+              git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc-build
+              cd vlc-build
+              python3 ../ci/patch_xmeye_avi.py
+              export VLC_PREBUILT_CONTRIBS_URL=https://artifacts.videolan.org/vlc-3.0/win64/vlc-contrib-x86_64-w64-mingw32-910cc9cada6080dd777fbafb2ebdd0c24f702c30.tar.zst
+              python3 ../ci/add_avi_preflight.py extras/package/win32/build.sh
+              extras/package/win32/build.sh -a x86_64 -p
+              DLL=$(find . -type f -name libavi_plugin.dll | head -n 1)
+              test -n "$DLL"
+              x86_64-w64-mingw32-strip --strip-unneeded "$DLL" || true
+              mv "$DLL" /work/out/libavi_plugin.dll
+            '
+      - name: Metadata
+        run: |
+          sha256sum out/libavi_plugin.dll > out/SHA256SUMS.txt
+          printf 'VLC base: 3.0.24\nPatch: XMEye AVI H264-tagged HEVC compatibility\nAuthor: Álvaro Ibarz - https://github.com/aibarz\n' > out/BUILD-INFO.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vlc-3.0.24-xmeye-avi-win64
+          path: out/
