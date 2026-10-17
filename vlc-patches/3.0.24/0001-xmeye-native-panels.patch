@@ -1,18 +1,8 @@
-From cc4ce0148f511a3428c302703cdc0f5e36e101d8 Mon Sep 17 00:00:00 2001
-From: Alvaro <aibarz@users.noreply.github.com>
-Date: Sat, 17 Oct 2026 08:33:01 +0200
-Subject: [PATCH] Add native XMEye controls and zoom tabs
-
----
- modules/gui/qt/dialogs/extended.cpp | 215 ++++++++++++++++++++++++++++
- modules/gui/qt/dialogs/extended.hpp |   2 +
- 2 files changed, 217 insertions(+)
-
 diff --git a/modules/gui/qt/dialogs/extended.cpp b/modules/gui/qt/dialogs/extended.cpp
-index 4562a0e..8da1d82 100644
+index 4562a0e..7eb652e 100644
 --- a/modules/gui/qt/dialogs/extended.cpp
 +++ b/modules/gui/qt/dialogs/extended.cpp
-@@ -31,12 +31,221 @@
+@@ -31,12 +31,256 @@
  
  #include "main_interface.hpp" /* Needed for external MI size */
  #include "input_manager.hpp"
@@ -195,7 +185,7 @@ index 4562a0e..8da1d82 100644
 +class XMEyeZoomCanvas : public QWidget
 +{
 +public:
-+    explicit XMEyeZoomCanvas(QWidget *parent=nullptr):QWidget(parent){ setMinimumSize(440,330); setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Expanding); }
++    explicit XMEyeZoomCanvas(QWidget *parent=nullptr):QWidget(parent){ setMinimumSize(560,420); setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Expanding); }
 +    void setCenter(int x,int y){cx=x;cy=y;update();} void setZoom(int p){zoom=p;update();} void setCallback(const std::function<void(int,int)> &cb){changed=cb;}
 +protected:
 +    void paintEvent(QPaintEvent*) override
@@ -212,34 +202,69 @@ index 4562a0e..8da1d82 100644
 +    int cx=50,cy=50,zoom=200; std::function<void(int,int)> changed;
 +};
 +
++class XMEyeZoomScale : public QWidget
++{
++public:
++    explicit XMEyeZoomScale(QWidget *parent=nullptr):QWidget(parent)
++    {
++        setMinimumHeight(70);
++        setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
++    }
++    void setValue(int v){ value=qBound(100,v,800); update(); }
++    void setCallback(const std::function<void(int)> &cb){ changed=cb; }
++protected:
++    void paintEvent(QPaintEvent*) override
++    {
++        QPainter p(this); p.setRenderHint(QPainter::Antialiasing,true);
++        QRectF area=rect().adjusted(14,14,-14,-24);
++        QLinearGradient gr(area.topLeft(),area.topRight());
++        gr.setColorAt(0.0,QColor(40,40,40)); gr.setColorAt(0.5,QColor(135,135,135)); gr.setColorAt(1.0,QColor(235,235,235));
++        p.setPen(QPen(palette().mid().color(),1)); p.setBrush(gr); p.drawRoundedRect(area,6,6);
++        const double f=(value-100)/700.0; const double x=area.left()+area.width()*f;
++        p.setPen(QPen(QColor(255,255,255),3)); p.drawLine(QPointF(x,area.top()-5),QPointF(x,area.bottom()+5));
++        p.setPen(palette().text().color());
++        p.drawText(QRectF(0,height()-22,width(),20),Qt::AlignCenter,QString("Zoom %1%   (100%–800%)").arg(value));
++    }
++    void mousePressEvent(QMouseEvent *e) override {setFromPoint(e->pos());}
++    void mouseMoveEvent(QMouseEvent *e) override {if(e->buttons()&Qt::LeftButton)setFromPoint(e->pos());}
++private:
++    void setFromPoint(const QPoint &pt)
++    {
++        QRectF area=rect().adjusted(14,14,-14,-24);
++        const double f=qBound(0.0,(pt.x()-area.left())/area.width(),1.0);
++        value=qRound(100.0+700.0*f); update(); if(changed)changed(value);
++    }
++    int value=200; std::function<void(int)> changed;
++};
++
 +class XMEyeZoomPanel : public QWidget
 +{
 +public:
 +    XMEyeZoomPanel(intf_thread_t *intf,QWidget *parent):QWidget(parent),p_intf(intf)
 +    {
-+        QVBoxLayout *l=new QVBoxLayout(this); canvas=new XMEyeZoomCanvas(this); l->addWidget(canvas,1);
++        QVBoxLayout *l=new QVBoxLayout(this); canvas=new XMEyeZoomCanvas(this); l->addWidget(canvas,1); zoomReadout=new QLabel("200%",this); QFont zf=zoomReadout->font(); zf.setPointSize(zf.pointSize()+8); zf.setBold(true); zoomReadout->setFont(zf); zoomReadout->setAlignment(Qt::AlignCenter); l->addWidget(zoomReadout); zoomScale=new XMEyeZoomScale(this); l->addWidget(zoomScale);
 +        QGridLayout *c=new QGridLayout; enabled=new QCheckBox(qtr("Zoom activo"),this); enabled->setChecked(true); zoomSlider=new QSlider(Qt::Horizontal,this); zoomSlider->setRange(100,800); zoomSlider->setValue(200); zoomSlider->setTickInterval(25); zoomSlider->setPageStep(25); zoomSpin=xmeyeSpin(100,800,200,this,"%"); xSpin=xmeyeSpin(0,100,50,this,"%"); ySpin=xmeyeSpin(0,100,50,this,"%"); wSpin=xmeyeSpin(16,10000,2592,this); hSpin=xmeyeSpin(16,10000,1944,this);
 +        c->addWidget(enabled,0,0); c->addWidget(new QLabel(qtr("Zoom")),0,1); c->addWidget(zoomSlider,0,2,1,4); c->addWidget(zoomSpin,0,6); c->addWidget(new QLabel(qtr("Centro X")),1,0); c->addWidget(xSpin,1,1); c->addWidget(new QLabel(qtr("Centro Y")),1,2); c->addWidget(ySpin,1,3); c->addWidget(new QLabel(qtr("Fuente W")),1,4); c->addWidget(wSpin,1,5); c->addWidget(new QLabel(qtr("H")),1,6); c->addWidget(hSpin,1,7);
 +        QPushButton *save=new QPushButton(qtr("Guardar posición"),this),*restore=new QPushButton(qtr("Recuperar"),this),*center=new QPushButton(qtr("Centrar"),this); c->addWidget(save,2,0,1,2); c->addWidget(restore,2,2,1,2); c->addWidget(center,2,4,1,2); l->addLayout(c);
 +        QLabel *help=new QLabel(qtr("Arrastra el rectángulo grande para mover el centro. El zoom y la posición se aplican en vivo."),this); help->setWordWrap(true); l->addWidget(help);
-+        connect(zoomSlider,&QSlider::valueChanged,zoomSpin,&QSpinBox::setValue); connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),zoomSlider,&QSlider::setValue);
-+        connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setZoom(v);apply();}); connect(xSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(v,ySpin->value());apply();}); connect(ySpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(xSpin->value(),v);apply();}); connect(wSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(hSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(enabled,&QCheckBox::toggled,this,[this](bool){apply();});
++        connect(zoomSlider,&QSlider::valueChanged,zoomSpin,&QSpinBox::setValue); connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),zoomSlider,&QSlider::setValue); zoomScale->setCallback([this](int v){zoomSpin->setValue(v);});
++        connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setZoom(v); zoomScale->setValue(v); zoomReadout->setText(QString("%1%").arg(v)); apply();}); connect(xSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(v,ySpin->value());apply();}); connect(ySpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(xSpin->value(),v);apply();}); connect(wSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(hSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(enabled,&QCheckBox::toggled,this,[this](bool){apply();});
 +        canvas->setCallback([this](int x,int y){QSignalBlocker bx(xSpin),by(ySpin);xSpin->setValue(x);ySpin->setValue(y);apply();});
 +        connect(center,&QPushButton::clicked,this,[this](){xSpin->setValue(50);ySpin->setValue(50);}); connect(save,&QPushButton::clicked,this,[this](){QSettings s;s.setValue("XMEyeZoom/x",xSpin->value());s.setValue("XMEyeZoom/y",ySpin->value());s.setValue("XMEyeZoom/zoom",zoomSpin->value());s.setValue("XMEyeZoom/w",wSpin->value());s.setValue("XMEyeZoom/h",hSpin->value());}); connect(restore,&QPushButton::clicked,this,[this](){QSettings s;xSpin->setValue(s.value("XMEyeZoom/x",50).toInt());ySpin->setValue(s.value("XMEyeZoom/y",50).toInt());zoomSpin->setValue(s.value("XMEyeZoom/zoom",200).toInt());wSpin->setValue(s.value("XMEyeZoom/w",2592).toInt());hSpin->setValue(s.value("XMEyeZoom/h",1944).toInt());});
 +    }
 +private:
 +    void apply(){ canvas->setCenter(xSpin->value(),ySpin->value()); canvas->setZoom(zoomSpin->value()); QVector<vout_thread_t*> vouts=THEMIM->getVouts(); foreach(vout_thread_t *v,vouts){ if(!enabled->isChecked()){var_SetInteger(v,"crop-left",0);var_SetInteger(v,"crop-right",0);var_SetInteger(v,"crop-top",0);var_SetInteger(v,"crop-bottom",0);} else {double z=zoomSpin->value()/100.0;int w=wSpin->value(),h=hSpin->value(),vw=qMax(2,qRound(w/z)),vh=qMax(2,qRound(h/z));int left=qRound(xSpin->value()*w/100.0-vw/2.0),top=qRound(ySpin->value()*h/100.0-vh/2.0);left=qBound(0,left,w-vw);top=qBound(0,top,h-vh);var_SetInteger(v,"crop-left",left);var_SetInteger(v,"crop-right",w-vw-left);var_SetInteger(v,"crop-top",top);var_SetInteger(v,"crop-bottom",h-vh-top);var_SetBool(v,"autoscale",true);} vlc_object_release(v);} }
-+    intf_thread_t *p_intf; XMEyeZoomCanvas *canvas; QCheckBox *enabled; QSlider *zoomSlider; QSpinBox *zoomSpin,*xSpin,*ySpin,*wSpin,*hSpin;
++    intf_thread_t *p_intf; XMEyeZoomCanvas *canvas; XMEyeZoomScale *zoomScale; QLabel *zoomReadout; QCheckBox *enabled; QSlider *zoomSlider; QSpinBox *zoomSpin,*xSpin,*ySpin,*wSpin,*hSpin;
 +};
  
  ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
                 : QVLCDialog( (QWidget*)_p_intf->p_sys->p_mi, _p_intf )
-@@ -110,6 +319,12 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
+@@ -110,6 +354,12 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
      syncW = new SyncControls( p_intf, videoTab );
      mainTabW->insertTab( SYNCHRO_TAB, syncW, qtr( "Synchronization" ) );
  
 +    XMEyePanel *xmeyePanel = new XMEyePanel( p_intf, mainTabW );
-+    mainTabW->insertTab( XMEYE_TAB, xmeyePanel, qtr( "XMEye" ) );
++    mainTabW->insertTab( XMEYE_TAB, xmeyePanel, qtr( "XMEye Ajuste" ) );
 +
 +    XMEyeZoomPanel *xmeyeZoomPanel = new XMEyeZoomPanel( p_intf, mainTabW );
 +    mainTabW->insertTab( XMEYE_ZOOM_TAB, xmeyeZoomPanel, qtr( "XMEye Zoom" ) );
@@ -260,6 +285,3 @@ index 44e2086..2c8eef0 100644
          V4L2_TAB
      };
      void showTab( int i );
--- 
-2.55.0.windows.5
-
