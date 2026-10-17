@@ -1,8 +1,8 @@
 diff --git a/modules/gui/qt/dialogs/extended.cpp b/modules/gui/qt/dialogs/extended.cpp
-index 4562a0e..047fb14 100644
+index 4562a0e..85bdc69 100644
 --- a/modules/gui/qt/dialogs/extended.cpp
 +++ b/modules/gui/qt/dialogs/extended.cpp
-@@ -31,12 +31,256 @@
+@@ -31,12 +31,259 @@
  
  #include "main_interface.hpp" /* Needed for external MI size */
  #include "input_manager.hpp"
@@ -29,6 +29,7 @@ index 4562a0e..047fb14 100644
 +#include <functional>
  #include <vlc_modules.h>
 +#include <vlc_vout.h>
++#include <vlc_vout_osd.h>
 +
 +
 +/* XMEye native panels — original concept and functional design: Álvaro Ibarz */
@@ -248,18 +249,20 @@ index 4562a0e..047fb14 100644
 +        QPushButton *save=new QPushButton(qtr("Guardar posición"),this),*restore=new QPushButton(qtr("Recuperar"),this),*center=new QPushButton(qtr("Centrar"),this); c->addWidget(save,2,0,1,2); c->addWidget(restore,2,2,1,2); c->addWidget(center,2,4,1,2); l->addLayout(c);
 +        QLabel *help=new QLabel(qtr("Arrastra el rectángulo grande para mover el centro. El zoom y la posición se aplican en vivo."),this); help->setWordWrap(true); l->addWidget(help);
 +        connect(zoomSlider,&QSlider::valueChanged,zoomSpin,&QSpinBox::setValue); connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),zoomSlider,&QSlider::setValue); zoomScale->setCallback([this](int v){zoomSpin->setValue(v);});
-+        connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setZoom(v); zoomScale->setValue(v); zoomReadout->setText(QString("%1%").arg(v)); apply();}); connect(xSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(v,ySpin->value());apply();}); connect(ySpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(xSpin->value(),v);apply();}); connect(wSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(hSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(enabled,&QCheckBox::toggled,this,[this](bool){apply();});
++        connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setZoom(v); updateCenterLimits(v); zoomScale->setValue(v); zoomReadout->setText(QString("%1%").arg(v)); apply(); showZoomOsd(v);}); connect(xSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(v,ySpin->value());apply();}); connect(ySpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(xSpin->value(),v);apply();}); connect(wSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(hSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(enabled,&QCheckBox::toggled,this,[this](bool){apply();});
 +        canvas->setCallback([this](int x,int y){QSignalBlocker bx(xSpin),by(ySpin);xSpin->setValue(x);ySpin->setValue(y);apply();});
-+        connect(center,&QPushButton::clicked,this,[this](){xSpin->setValue(50);ySpin->setValue(50);}); connect(save,&QPushButton::clicked,this,[this](){QSettings s;s.setValue("XMEyeZoom/x",xSpin->value());s.setValue("XMEyeZoom/y",ySpin->value());s.setValue("XMEyeZoom/zoom",zoomSpin->value());s.setValue("XMEyeZoom/w",wSpin->value());s.setValue("XMEyeZoom/h",hSpin->value());}); connect(restore,&QPushButton::clicked,this,[this](){QSettings s;xSpin->setValue(s.value("XMEyeZoom/x",50).toInt());ySpin->setValue(s.value("XMEyeZoom/y",50).toInt());zoomSpin->setValue(s.value("XMEyeZoom/zoom",200).toInt());wSpin->setValue(s.value("XMEyeZoom/w",2592).toInt());hSpin->setValue(s.value("XMEyeZoom/h",1944).toInt());});
++        connect(center,&QPushButton::clicked,this,[this](){xSpin->setValue(50);ySpin->setValue(50);}); connect(save,&QPushButton::clicked,this,[this](){QSettings s;s.setValue("XMEyeZoom/x",xSpin->value());s.setValue("XMEyeZoom/y",ySpin->value());s.setValue("XMEyeZoom/zoom",zoomSpin->value());s.setValue("XMEyeZoom/w",wSpin->value());s.setValue("XMEyeZoom/h",hSpin->value());}); connect(restore,&QPushButton::clicked,this,[this](){QSettings s;zoomSpin->setValue(s.value("XMEyeZoom/zoom",200).toInt());xSpin->setValue(s.value("XMEyeZoom/x",50).toInt());ySpin->setValue(s.value("XMEyeZoom/y",50).toInt());wSpin->setValue(s.value("XMEyeZoom/w",2592).toInt());hSpin->setValue(s.value("XMEyeZoom/h",1944).toInt());}); updateCenterLimits(zoomSpin->value());
 +    }
 +private:
-+    void apply(){ canvas->setCenter(xSpin->value(),ySpin->value()); canvas->setZoom(zoomSpin->value()); QVector<vout_thread_t*> vouts=THEMIM->getVouts(); foreach(vout_thread_t *v,vouts){ if(!enabled->isChecked()){var_SetInteger(v,"crop-left",0);var_SetInteger(v,"crop-right",0);var_SetInteger(v,"crop-top",0);var_SetInteger(v,"crop-bottom",0);} else {double z=zoomSpin->value()/100.0;int w=wSpin->value(),h=hSpin->value(),vw=qMax(2,qRound(w/z)),vh=qMax(2,qRound(h/z));int left=qRound(xSpin->value()*w/100.0-vw/2.0),top=qRound(ySpin->value()*h/100.0-vh/2.0);left=qBound(0,left,w-vw);top=qBound(0,top,h-vh);var_SetInteger(v,"crop-left",left);var_SetInteger(v,"crop-right",w-vw-left);var_SetInteger(v,"crop-top",top);var_SetInteger(v,"crop-bottom",h-vh-top);var_SetBool(v,"autoscale",true);} vlc_object_release(v);} }
++    void showZoomOsd(int zoomValue){ const QByteArray text=QString("Zoom %1%").arg(zoomValue).toUtf8(); QVector<vout_thread_t*> vouts=THEMIM->getVouts(); foreach(vout_thread_t *v,vouts){ vout_OSDText(v,VOUT_SPU_CHANNEL_OSD,SUBPICTURE_ALIGN_BOTTOM|SUBPICTURE_ALIGN_LEFT,VLC_TICK_FROM_MS(1200),text.constData()); vlc_object_release(v); } }
++    void updateCenterLimits(int zoomValue){ const int minCenter=qBound(0,qRound(5000.0/qMax(100,zoomValue)),50),maxCenter=100-minCenter; QSignalBlocker bx(xSpin),by(ySpin); xSpin->setRange(minCenter,maxCenter); ySpin->setRange(minCenter,maxCenter); canvas->setCenter(xSpin->value(),ySpin->value()); }
++    void apply(){ canvas->setCenter(xSpin->value(),ySpin->value()); canvas->setZoom(zoomSpin->value()); QVector<vout_thread_t*> vouts=THEMIM->getVouts(); foreach(vout_thread_t *v,vouts){ if(!enabled->isChecked()){var_SetString(v,"crop","0+0+0+0");} else {double z=zoomSpin->value()/100.0;int w=wSpin->value(),h=hSpin->value(),vw=qMax(2,qRound(w/z)),vh=qMax(2,qRound(h/z));int left=qRound(xSpin->value()*w/100.0-vw/2.0),top=qRound(ySpin->value()*h/100.0-vh/2.0);left=qBound(0,left,w-vw);top=qBound(0,top,h-vh);int right=w-vw-left,bottom=h-vh-top;QByteArray crop=QString("%1+%2+%3+%4").arg(left).arg(top).arg(right).arg(bottom).toUtf8();var_SetString(v,"crop",crop.constData());var_SetBool(v,"autoscale",true);} vlc_object_release(v);} }
 +    intf_thread_t *p_intf; XMEyeZoomCanvas *canvas; XMEyeZoomScale *zoomScale; QLabel *zoomReadout; QCheckBox *enabled; QSlider *zoomSlider; QSpinBox *zoomSpin,*xSpin,*ySpin,*wSpin,*hSpin;
 +};
  
  ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
                 : QVLCDialog( (QWidget*)_p_intf->p_sys->p_mi, _p_intf )
-@@ -110,6 +354,17 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
+@@ -110,6 +357,17 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
      syncW = new SyncControls( p_intf, videoTab );
      mainTabW->insertTab( SYNCHRO_TAB, syncW, qtr( "Synchronization" ) );
  
