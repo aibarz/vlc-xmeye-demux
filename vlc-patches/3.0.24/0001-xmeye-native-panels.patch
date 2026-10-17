@@ -1,5 +1,5 @@
 diff --git a/modules/gui/qt/dialogs/extended.cpp b/modules/gui/qt/dialogs/extended.cpp
-index 4562a0e..85bdc69 100644
+index 4562a0e..2478998 100644
 --- a/modules/gui/qt/dialogs/extended.cpp
 +++ b/modules/gui/qt/dialogs/extended.cpp
 @@ -31,12 +31,259 @@
@@ -262,7 +262,7 @@ index 4562a0e..85bdc69 100644
  
  ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
                 : QVLCDialog( (QWidget*)_p_intf->p_sys->p_mi, _p_intf )
-@@ -110,6 +357,17 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
+@@ -110,6 +357,24 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
      syncW = new SyncControls( p_intf, videoTab );
      mainTabW->insertTab( SYNCHRO_TAB, syncW, qtr( "Synchronization" ) );
  
@@ -275,20 +275,15 @@ index 4562a0e..85bdc69 100644
 +    xmeyeTabs->addTab( xmeyePanel, qtr( "Ajuste" ) );
 +    xmeyeTabs->addTab( xmeyeZoomPanel, qtr( "Zoom" ) );
 +    xmeyeLayout->addWidget( xmeyeTabs );
++    QLabel *xmeyeCredit = new QLabel( "<a href="https://github.com/aibarz">Álvaro Ibarz · GitHub</a>", xmeyeWidget );
++    xmeyeCredit->setTextFormat( Qt::RichText );
++    xmeyeCredit->setOpenExternalLinks( true );
++    xmeyeCredit->setAlignment( Qt::AlignRight );
++    xmeyeCredit->setStyleSheet( "font-size: 9px; color: #777; margin: 1px 4px 2px 0;" );
++    xmeyeLayout->addWidget( xmeyeCredit );
 +    mainTabW->insertTab( XMEYE_TAB, xmeyeWidget, qtr( "XMEye" ) );
++o
 +
      if( module_exists( "v4l2" ) )
      {
          ExtV4l2 *v4l2 = new ExtV4l2( p_intf, mainTabW );
-diff --git a/modules/gui/qt/dialogs/extended.hpp b/modules/gui/qt/dialogs/extended.hpp
-index 44e2086..3e8a1cd 100644
---- a/modules/gui/qt/dialogs/extended.hpp
-+++ b/modules/gui/qt/dialogs/extended.hpp
-@@ -40,6 +40,7 @@ public:
-         AUDIO_TAB = 0,
-         VIDEO_TAB,
-         SYNCHRO_TAB,
-+        XMEYE_TAB,
-         V4L2_TAB
-     };
-     void showTab( int i );
