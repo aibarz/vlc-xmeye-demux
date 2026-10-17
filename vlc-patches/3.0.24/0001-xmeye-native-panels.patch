@@ -1,0 +1,265 @@
+From cc4ce0148f511a3428c302703cdc0f5e36e101d8 Mon Sep 17 00:00:00 2001
+From: Alvaro <aibarz@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 08:33:01 +0200
+Subject: [PATCH] Add native XMEye controls and zoom tabs
+
+---
+ modules/gui/qt/dialogs/extended.cpp | 215 ++++++++++++++++++++++++++++
+ modules/gui/qt/dialogs/extended.hpp |   2 +
+ 2 files changed, 217 insertions(+)
+
+diff --git a/modules/gui/qt/dialogs/extended.cpp b/modules/gui/qt/dialogs/extended.cpp
+index 4562a0e..8da1d82 100644
+--- a/modules/gui/qt/dialogs/extended.cpp
++++ b/modules/gui/qt/dialogs/extended.cpp
+@@ -31,12 +31,221 @@
+ 
+ #include "main_interface.hpp" /* Needed for external MI size */
+ #include "input_manager.hpp"
++#include "qt.hpp"
+ 
+ #include <QTabWidget>
+ #include <QGridLayout>
++#include <QVBoxLayout>
++#include <QHBoxLayout>
++#include <QFormLayout>
+ #include <QDialogButtonBox>
+ #include <QPushButton>
++#include <QGroupBox>
++#include <QCheckBox>
++#include <QSpinBox>
++#include <QSlider>
++#include <QLabel>
++#include <QScrollArea>
++#include <QPainter>
++#include <QMouseEvent>
++#include <QLinearGradient>
++#include <QSettings>
++#include <QSignalBlocker>
++#include <functional>
+ #include <vlc_modules.h>
++#include <vlc_vout.h>
++
++
++/* XMEye native panels — original concept and functional design: Álvaro Ibarz */
++static QString xmeyeVideoFilterChain()
++{
++    char *raw = var_GetString( THEPL, "video-filter" );
++    QString chain = qfu( raw ? raw : "" );
++    free( raw );
++    return chain;
++}
++
++static bool xmeyeFilterEnabled( const char *name )
++{
++    QStringList list = xmeyeVideoFilterChain().split( ':' );
++    list.removeAll( QString() );
++    return list.contains( qfu( name ) );
++}
++
++static void xmeyeSetFilterEnabled( intf_thread_t *p_intf, const char *name, bool enabled )
++{
++    QStringList list = xmeyeVideoFilterChain().split( ':' );
++    list.removeAll( QString() );
++    const QString module = qfu( name );
++    if( enabled && !list.contains( module ) ) list << module;
++    if( !enabled ) list.removeAll( module );
++    const QByteArray chain = list.join( ":" ).toUtf8();
++    var_SetString( THEPL, "video-filter", chain.constData() );
++
++    QVector<vout_thread_t*> vouts = THEMIM->getVouts();
++    foreach( vout_thread_t *vout, vouts )
++    {
++        var_SetString( vout, "video-filter", chain.constData() );
++        vlc_object_release( vout );
++    }
++    VLC_UNUSED( p_intf );
++}
++
++static void xmeyeSetOption( intf_thread_t *p_intf, const char *module,
++                            const char *option, int value, bool isBool = false )
++{
++    const int type = isBool ? VLC_VAR_BOOL : VLC_VAR_INTEGER;
++    vlc_value_t val;
++    if( isBool ) val.b_bool = value != 0;
++    else val.i_int = value;
++
++    var_Create( THEPL, option, type | VLC_VAR_DOINHERIT );
++    var_SetChecked( THEPL, option, type, val );
++
++    QVector<vout_thread_t*> vouts = THEMIM->getVouts();
++    foreach( vout_thread_t *vout, vouts )
++    {
++        var_Create( vout, option, type | VLC_VAR_DOINHERIT | VLC_VAR_ISCOMMAND );
++        var_SetChecked( vout, option, type, val );
++        vlc_object_release( vout );
++    }
++
++    vlc_object_t *obj = (vlc_object_t*)vlc_object_find_name( THEPL, module );
++    if( obj )
++    {
++        if( var_Type( obj, option ) != 0 )
++            var_SetChecked( obj, option, type, val );
++        vlc_object_release( obj );
++    }
++    VLC_UNUSED( p_intf );
++}
++
++static QSpinBox *xmeyeSpin( int minv, int maxv, int value, QWidget *parent,
++                            const QString &suffix = QString() )
++{
++    QSpinBox *s = new QSpinBox( parent );
++    s->setRange( minv, maxv );
++    s->setValue( value );
++    if( !suffix.isEmpty() ) s->setSuffix( suffix );
++    return s;
++}
++
++class XMEyePanel : public QWidget
++{
++public:
++    XMEyePanel( intf_thread_t *intf, QWidget *parent ) : QWidget( parent ), p_intf( intf )
++    {
++        QVBoxLayout *outer = new QVBoxLayout( this );
++        QScrollArea *scroll = new QScrollArea( this );
++        scroll->setWidgetResizable( true );
++        QWidget *body = new QWidget( scroll );
++        QVBoxLayout *layout = new QVBoxLayout( body );
++
++        gate = new QGroupBox( qtr("Static Gate V2 — temporal selectivo"), body );
++        gate->setCheckable( true ); gate->setChecked( xmeyeFilterEnabled("xmeyegate") );
++        QGridLayout *g = new QGridLayout( gate );
++        block = xmeyeSpin( 8, 32, 16, gate ); sample = xmeyeSpin( 1, 4, 2, gate );
++        staticMad = xmeyeSpin( 0, 16, 2, gate ); changedThr = xmeyeSpin( 1, 32, 4, gate );
++        changedPct = xmeyeSpin( 0, 50, 8, gate, "%" ); pixelThr = xmeyeSpin( 1, 32, 2, gate );
++        dilate = xmeyeSpin( 0, 2, 1, gate ); prevWeight = xmeyeSpin( 0, 60, 50, gate, "%" );
++        changedSlider = new QSlider( Qt::Horizontal, gate ); changedSlider->setRange(0,50); changedSlider->setValue(8); changedSlider->setTickInterval(1);
++        prevSlider = new QSlider( Qt::Horizontal, gate ); prevSlider->setRange(0,60); prevSlider->setValue(50); prevSlider->setTickInterval(1);
++        int r=0;
++        g->addWidget(new QLabel(qtr("Bloque")),r,0); g->addWidget(block,r,1); g->addWidget(new QLabel(qtr("Muestreo")),r,2); g->addWidget(sample,r,3); g->addWidget(new QLabel(qtr("MAD estático")),r,4); g->addWidget(staticMad,r,5); r++;
++        g->addWidget(new QLabel(qtr("Δ muestra")),r,0); g->addWidget(changedThr,r,1); g->addWidget(new QLabel(qtr("% cambiado")),r,2); g->addWidget(changedPct,r,3); g->addWidget(changedSlider,r,4,1,2); r++;
++        g->addWidget(new QLabel(qtr("Δ píxel")),r,0); g->addWidget(pixelThr,r,1); g->addWidget(new QLabel(qtr("Protección bloques")),r,2); g->addWidget(dilate,r,3); r++;
++        g->addWidget(new QLabel(qtr("Peso frame anterior")),r,0,1,2); g->addWidget(prevWeight,r,2); g->addWidget(prevSlider,r,3,1,3); r++;
++        QPushButton *preset = new QPushButton( qtr("Preset de referencia 8%"), gate ); g->addWidget(preset,r,0,1,3);
++        QLabel *hint = new QLabel( qtr("Los cambios se aplican en vivo. 8% es la referencia actual."), gate ); g->addWidget(hint,r,3,1,3);
++        layout->addWidget( gate );
++
++        deblock = new QGroupBox( qtr("Deblock"), body ); deblock->setCheckable(true); deblock->setChecked(xmeyeFilterEnabled("xmeyedeblock"));
++        QGridLayout *db = new QGridLayout(deblock);
++        dbGrid=xmeyeSpin(4,32,8,deblock); dbThr=xmeyeSpin(1,32,8,deblock); dbSide=xmeyeSpin(0,24,4,deblock); dbStrength=xmeyeSpin(0,100,35,deblock,"%"); dbDelta=xmeyeSpin(1,8,2,deblock);
++        db->addWidget(new QLabel(qtr("Grid")),0,0); db->addWidget(dbGrid,0,1); db->addWidget(new QLabel(qtr("Umbral")),0,2); db->addWidget(dbThr,0,3); db->addWidget(new QLabel(qtr("Lateral")),0,4); db->addWidget(dbSide,0,5);
++        db->addWidget(new QLabel(qtr("Fuerza")),1,0); db->addWidget(dbStrength,1,1); db->addWidget(new QLabel(qtr("Max Δ")),1,2); db->addWidget(dbDelta,1,3); layout->addWidget(deblock);
++
++        deconv = new QGroupBox( qtr("Deconv / restauración de borde"), body ); deconv->setCheckable(true); deconv->setChecked(xmeyeFilterEnabled("xmeyedeconv"));
++        QGridLayout *dc = new QGridLayout(deconv);
++        dcStrength=xmeyeSpin(0,100,30,deconv,"%"); dcThr=xmeyeSpin(0,32,5,deconv); dcLimit=xmeyeSpin(1,32,5,deconv); dcPolarity=xmeyeSpin(-1,1,1,deconv);
++        dc->addWidget(new QLabel(qtr("Fuerza")),0,0); dc->addWidget(dcStrength,0,1); dc->addWidget(new QLabel(qtr("Umbral")),0,2); dc->addWidget(dcThr,0,3); dc->addWidget(new QLabel(qtr("Límite")),0,4); dc->addWidget(dcLimit,0,5); dc->addWidget(new QLabel(qtr("Polaridad")),1,0); dc->addWidget(dcPolarity,1,1); layout->addWidget(deconv);
++
++        gray = new QGroupBox( qtr("Gray Guard"), body ); gray->setCheckable(true); gray->setChecked(xmeyeFilterEnabled("xmeyegrayguard"));
++        QGridLayout *gg = new QGridLayout(gray);
++        grayAdaptive=new QCheckBox(qtr("Adaptativo"),gray); grayAdaptive->setChecked(true); grayStep=xmeyeSpin(2,32,8,gray); grayActivity=xmeyeSpin(0,32,3,gray); graySpread=xmeyeSpin(0,64,8,gray); grayRatio=xmeyeSpin(5,60,20,gray,"%"); grayMin=xmeyeSpin(0,255,32,gray); grayMax=xmeyeSpin(0,255,224,gray);
++        gg->addWidget(grayAdaptive,0,0); gg->addWidget(new QLabel(qtr("Paso")),0,1); gg->addWidget(grayStep,0,2); gg->addWidget(new QLabel(qtr("Actividad")),0,3); gg->addWidget(grayActivity,0,4); gg->addWidget(new QLabel(qtr("Spread")),0,5); gg->addWidget(graySpread,0,6);
++        gg->addWidget(new QLabel(qtr("Ratio")),1,0); gg->addWidget(grayRatio,1,1); gg->addWidget(new QLabel(qtr("Luma min")),1,2); gg->addWidget(grayMin,1,3); gg->addWidget(new QLabel(qtr("Luma max")),1,4); gg->addWidget(grayMax,1,5); layout->addWidget(gray);
++
++        focus = new QGroupBox( qtr("Focus — experimental"), body ); focus->setCheckable(true); focus->setChecked(xmeyeFilterEnabled("xmeyefocus"));
++        QGridLayout *fg = new QGridLayout(focus);
++        focusStrength=xmeyeSpin(0,100,25,focus,"%"); focusActivity=xmeyeSpin(0,32,6,focus); focusLimit=xmeyeSpin(1,32,6,focus);
++        fg->addWidget(new QLabel(qtr("Fuerza")),0,0); fg->addWidget(focusStrength,0,1); fg->addWidget(new QLabel(qtr("Actividad")),0,2); fg->addWidget(focusActivity,0,3); fg->addWidget(new QLabel(qtr("Límite")),0,4); fg->addWidget(focusLimit,0,5); layout->addWidget(focus);
++
++        layout->addStretch(1); scroll->setWidget(body); outer->addWidget(scroll);
++
++        connect(gate,&QGroupBox::toggled,this,[this](bool on){xmeyeSetFilterEnabled(p_intf,"xmeyegate",on); applyGate();});
++        connect(changedSlider,&QSlider::valueChanged,changedPct,&QSpinBox::setValue); connect(changedPct,QOverload<int>::of(&QSpinBox::valueChanged),changedSlider,&QSlider::setValue);
++        connect(prevSlider,&QSlider::valueChanged,prevWeight,&QSpinBox::setValue); connect(prevWeight,QOverload<int>::of(&QSpinBox::valueChanged),prevSlider,&QSlider::setValue);
++        for(QSpinBox *s : {block,sample,staticMad,changedThr,changedPct,pixelThr,dilate,prevWeight}) connect(s,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){applyGate();});
++        connect(preset,&QPushButton::clicked,this,[this](){block->setValue(16); sample->setValue(2); staticMad->setValue(2); changedThr->setValue(4); changedPct->setValue(8); pixelThr->setValue(2); dilate->setValue(1); prevWeight->setValue(50); gate->setChecked(true); applyGate();});
++
++        connect(deblock,&QGroupBox::toggled,this,[this](bool on){xmeyeSetFilterEnabled(p_intf,"xmeyedeblock",on); applyDeblock();});
++        for(QSpinBox *s : {dbGrid,dbThr,dbSide,dbStrength,dbDelta}) connect(s,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){applyDeblock();});
++        connect(deconv,&QGroupBox::toggled,this,[this](bool on){xmeyeSetFilterEnabled(p_intf,"xmeyedeconv",on); applyDeconv();});
++        for(QSpinBox *s : {dcStrength,dcThr,dcLimit,dcPolarity}) connect(s,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){applyDeconv();});
++        connect(gray,&QGroupBox::toggled,this,[this](bool on){xmeyeSetFilterEnabled(p_intf,"xmeyegrayguard",on); applyGray();}); connect(grayAdaptive,&QCheckBox::toggled,this,[this](bool){applyGray();});
++        for(QSpinBox *s : {grayStep,grayActivity,graySpread,grayRatio,grayMin,grayMax}) connect(s,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){applyGray();});
++        connect(focus,&QGroupBox::toggled,this,[this](bool on){xmeyeSetFilterEnabled(p_intf,"xmeyefocus",on); applyFocus();});
++        for(QSpinBox *s : {focusStrength,focusActivity,focusLimit}) connect(s,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){applyFocus();});
++    }
++private:
++    void applyGate(){ xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-enabled",gate->isChecked(),true); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-block-size",block->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-sample-step",sample->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-static-threshold",staticMad->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-motion-threshold",changedThr->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-max-changed-percent",changedPct->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-pixel-threshold",pixelThr->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-dilate-blocks",dilate->value()); xmeyeSetOption(p_intf,"xmeyegate","xmeyegate-max-prev-weight",prevWeight->value()); }
++    void applyDeblock(){ xmeyeSetOption(p_intf,"xmeyedeblock","xmeyedeblock-enabled",deblock->isChecked(),true); xmeyeSetOption(p_intf,"xmeyedeblock","xmeyedeblock-grid",dbGrid->value()); xmeyeSetOption(p_intf,"xmeyedeblock","xmeyedeblock-threshold",dbThr->value()); xmeyeSetOption(p_intf,"xmeyedeblock","xmeyedeblock-side-threshold",dbSide->value()); xmeyeSetOption(p_intf,"xmeyedeblock","xmeyedeblock-strength",dbStrength->value()); xmeyeSetOption(p_intf,"xmeyedeblock","xmeyedeblock-max-delta",dbDelta->value()); }
++    void applyDeconv(){ xmeyeSetOption(p_intf,"xmeyedeconv","xmeyedeconv-enabled",deconv->isChecked(),true); xmeyeSetOption(p_intf,"xmeyedeconv","xmeyedeconv-strength",dcStrength->value()); xmeyeSetOption(p_intf,"xmeyedeconv","xmeyedeconv-threshold",dcThr->value()); xmeyeSetOption(p_intf,"xmeyedeconv","xmeyedeconv-correction-limit",dcLimit->value()); xmeyeSetOption(p_intf,"xmeyedeconv","xmeyedeconv-polarity",dcPolarity->value()); }
++    void applyGray(){ xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-enabled",gray->isChecked(),true); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-adaptive",grayAdaptive->isChecked(),true); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-sample-step",grayStep->value()); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-flat-activity",grayActivity->value()); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-flat-spread",graySpread->value()); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-ratio-percent",grayRatio->value()); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-min-luma",grayMin->value()); xmeyeSetOption(p_intf,"xmeyegrayguard","xmeyegrayguard-max-luma",grayMax->value()); }
++    void applyFocus(){ xmeyeSetOption(p_intf,"xmeyefocus","xmeyefocus-enabled",focus->isChecked(),true); xmeyeSetOption(p_intf,"xmeyefocus","xmeyefocus-strength",focusStrength->value()); xmeyeSetOption(p_intf,"xmeyefocus","xmeyefocus-activity-threshold",focusActivity->value()); xmeyeSetOption(p_intf,"xmeyefocus","xmeyefocus-correction-limit",focusLimit->value()); }
++    intf_thread_t *p_intf; QGroupBox *gate,*deblock,*deconv,*gray,*focus; QSpinBox *block,*sample,*staticMad,*changedThr,*changedPct,*pixelThr,*dilate,*prevWeight,*dbGrid,*dbThr,*dbSide,*dbStrength,*dbDelta,*dcStrength,*dcThr,*dcLimit,*dcPolarity,*grayStep,*grayActivity,*graySpread,*grayRatio,*grayMin,*grayMax,*focusStrength,*focusActivity,*focusLimit; QSlider *changedSlider,*prevSlider; QCheckBox *grayAdaptive;
++};
++
++class XMEyeZoomCanvas : public QWidget
++{
++public:
++    explicit XMEyeZoomCanvas(QWidget *parent=nullptr):QWidget(parent){ setMinimumSize(440,330); setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Expanding); }
++    void setCenter(int x,int y){cx=x;cy=y;update();} void setZoom(int p){zoom=p;update();} void setCallback(const std::function<void(int,int)> &cb){changed=cb;}
++protected:
++    void paintEvent(QPaintEvent*) override
++    {
++        QPainter p(this); p.setRenderHint(QPainter::Antialiasing,true); QRectF area=rect().adjusted(10,10,-10,-28);
++        QLinearGradient gr(area.topLeft(),area.bottomRight()); gr.setColorAt(0,QColor(35,35,35)); gr.setColorAt(0.5,QColor(110,110,110)); gr.setColorAt(1,QColor(220,220,220)); p.fillRect(area,gr);
++        p.setPen(QPen(QColor(255,255,255,70),1)); for(int i=1;i<4;i++){ p.drawLine(QPointF(area.left()+area.width()*i/4.0,area.top()),QPointF(area.left()+area.width()*i/4.0,area.bottom())); p.drawLine(QPointF(area.left(),area.top()+area.height()*i/4.0),QPointF(area.right(),area.top()+area.height()*i/4.0)); }
++        double frac=100.0/qMax(100,zoom); double rw=area.width()*frac, rh=area.height()*frac; double px=area.left()+area.width()*cx/100.0, py=area.top()+area.height()*cy/100.0; QRectF roi(px-rw/2,py-rh/2,rw,rh); if(roi.left()<area.left())roi.moveLeft(area.left()); if(roi.right()>area.right())roi.moveRight(area.right()); if(roi.top()<area.top())roi.moveTop(area.top()); if(roi.bottom()>area.bottom())roi.moveBottom(area.bottom());
++        p.setPen(QPen(QColor(255,255,255),3)); p.drawRect(roi); p.drawLine(QPointF(px-10,py),QPointF(px+10,py)); p.drawLine(QPointF(px,py-10),QPointF(px,py+10)); p.setPen(palette().text().color()); p.drawText(QRectF(10,height()-24,width()-20,20),Qt::AlignCenter,QString("%1%   X %2%   Y %3%").arg(zoom).arg(cx).arg(cy));
++    }
++    void mousePressEvent(QMouseEvent *e) override {setFromPoint(e->pos());} void mouseMoveEvent(QMouseEvent *e) override {if(e->buttons()&Qt::LeftButton)setFromPoint(e->pos());}
++private:
++    void setFromPoint(const QPoint &pt){ QRectF area=rect().adjusted(10,10,-10,-28); int nx=qBound(0,qRound((pt.x()-area.left())*100.0/area.width()),100); int ny=qBound(0,qRound((pt.y()-area.top())*100.0/area.height()),100); cx=nx;cy=ny;update(); if(changed)changed(cx,cy); }
++    int cx=50,cy=50,zoom=200; std::function<void(int,int)> changed;
++};
++
++class XMEyeZoomPanel : public QWidget
++{
++public:
++    XMEyeZoomPanel(intf_thread_t *intf,QWidget *parent):QWidget(parent),p_intf(intf)
++    {
++        QVBoxLayout *l=new QVBoxLayout(this); canvas=new XMEyeZoomCanvas(this); l->addWidget(canvas,1);
++        QGridLayout *c=new QGridLayout; enabled=new QCheckBox(qtr("Zoom activo"),this); enabled->setChecked(true); zoomSlider=new QSlider(Qt::Horizontal,this); zoomSlider->setRange(100,800); zoomSlider->setValue(200); zoomSlider->setTickInterval(25); zoomSlider->setPageStep(25); zoomSpin=xmeyeSpin(100,800,200,this,"%"); xSpin=xmeyeSpin(0,100,50,this,"%"); ySpin=xmeyeSpin(0,100,50,this,"%"); wSpin=xmeyeSpin(16,10000,2592,this); hSpin=xmeyeSpin(16,10000,1944,this);
++        c->addWidget(enabled,0,0); c->addWidget(new QLabel(qtr("Zoom")),0,1); c->addWidget(zoomSlider,0,2,1,4); c->addWidget(zoomSpin,0,6); c->addWidget(new QLabel(qtr("Centro X")),1,0); c->addWidget(xSpin,1,1); c->addWidget(new QLabel(qtr("Centro Y")),1,2); c->addWidget(ySpin,1,3); c->addWidget(new QLabel(qtr("Fuente W")),1,4); c->addWidget(wSpin,1,5); c->addWidget(new QLabel(qtr("H")),1,6); c->addWidget(hSpin,1,7);
++        QPushButton *save=new QPushButton(qtr("Guardar posición"),this),*restore=new QPushButton(qtr("Recuperar"),this),*center=new QPushButton(qtr("Centrar"),this); c->addWidget(save,2,0,1,2); c->addWidget(restore,2,2,1,2); c->addWidget(center,2,4,1,2); l->addLayout(c);
++        QLabel *help=new QLabel(qtr("Arrastra el rectángulo grande para mover el centro. El zoom y la posición se aplican en vivo."),this); help->setWordWrap(true); l->addWidget(help);
++        connect(zoomSlider,&QSlider::valueChanged,zoomSpin,&QSpinBox::setValue); connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),zoomSlider,&QSlider::setValue);
++        connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setZoom(v);apply();}); connect(xSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(v,ySpin->value());apply();}); connect(ySpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int v){canvas->setCenter(xSpin->value(),v);apply();}); connect(wSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(hSpin,QOverload<int>::of(&QSpinBox::valueChanged),this,[this](int){apply();}); connect(enabled,&QCheckBox::toggled,this,[this](bool){apply();});
++        canvas->setCallback([this](int x,int y){QSignalBlocker bx(xSpin),by(ySpin);xSpin->setValue(x);ySpin->setValue(y);apply();});
++        connect(center,&QPushButton::clicked,this,[this](){xSpin->setValue(50);ySpin->setValue(50);}); connect(save,&QPushButton::clicked,this,[this](){QSettings s;s.setValue("XMEyeZoom/x",xSpin->value());s.setValue("XMEyeZoom/y",ySpin->value());s.setValue("XMEyeZoom/zoom",zoomSpin->value());s.setValue("XMEyeZoom/w",wSpin->value());s.setValue("XMEyeZoom/h",hSpin->value());}); connect(restore,&QPushButton::clicked,this,[this](){QSettings s;xSpin->setValue(s.value("XMEyeZoom/x",50).toInt());ySpin->setValue(s.value("XMEyeZoom/y",50).toInt());zoomSpin->setValue(s.value("XMEyeZoom/zoom",200).toInt());wSpin->setValue(s.value("XMEyeZoom/w",2592).toInt());hSpin->setValue(s.value("XMEyeZoom/h",1944).toInt());});
++    }
++private:
++    void apply(){ canvas->setCenter(xSpin->value(),ySpin->value()); canvas->setZoom(zoomSpin->value()); QVector<vout_thread_t*> vouts=THEMIM->getVouts(); foreach(vout_thread_t *v,vouts){ if(!enabled->isChecked()){var_SetInteger(v,"crop-left",0);var_SetInteger(v,"crop-right",0);var_SetInteger(v,"crop-top",0);var_SetInteger(v,"crop-bottom",0);} else {double z=zoomSpin->value()/100.0;int w=wSpin->value(),h=hSpin->value(),vw=qMax(2,qRound(w/z)),vh=qMax(2,qRound(h/z));int left=qRound(xSpin->value()*w/100.0-vw/2.0),top=qRound(ySpin->value()*h/100.0-vh/2.0);left=qBound(0,left,w-vw);top=qBound(0,top,h-vh);var_SetInteger(v,"crop-left",left);var_SetInteger(v,"crop-right",w-vw-left);var_SetInteger(v,"crop-top",top);var_SetInteger(v,"crop-bottom",h-vh-top);var_SetBool(v,"autoscale",true);} vlc_object_release(v);} }
++    intf_thread_t *p_intf; XMEyeZoomCanvas *canvas; QCheckBox *enabled; QSlider *zoomSlider; QSpinBox *zoomSpin,*xSpin,*ySpin,*wSpin,*hSpin;
++};
+ 
+ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
+                : QVLCDialog( (QWidget*)_p_intf->p_sys->p_mi, _p_intf )
+@@ -110,6 +319,12 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
+     syncW = new SyncControls( p_intf, videoTab );
+     mainTabW->insertTab( SYNCHRO_TAB, syncW, qtr( "Synchronization" ) );
+ 
++    XMEyePanel *xmeyePanel = new XMEyePanel( p_intf, mainTabW );
++    mainTabW->insertTab( XMEYE_TAB, xmeyePanel, qtr( "XMEye" ) );
++
++    XMEyeZoomPanel *xmeyeZoomPanel = new XMEyeZoomPanel( p_intf, mainTabW );
++    mainTabW->insertTab( XMEYE_ZOOM_TAB, xmeyeZoomPanel, qtr( "XMEye Zoom" ) );
++
+     if( module_exists( "v4l2" ) )
+     {
+         ExtV4l2 *v4l2 = new ExtV4l2( p_intf, mainTabW );
+diff --git a/modules/gui/qt/dialogs/extended.hpp b/modules/gui/qt/dialogs/extended.hpp
+index 44e2086..2c8eef0 100644
+--- a/modules/gui/qt/dialogs/extended.hpp
++++ b/modules/gui/qt/dialogs/extended.hpp
+@@ -40,6 +40,8 @@ public:
+         AUDIO_TAB = 0,
+         VIDEO_TAB,
+         SYNCHRO_TAB,
++        XMEYE_TAB,
++        XMEYE_ZOOM_TAB,
+         V4L2_TAB
+     };
+     void showTab( int i );
+-- 
+2.55.0.windows.5
+
