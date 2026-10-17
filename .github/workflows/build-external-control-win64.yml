@@ -1,0 +1,48 @@
+name: build-external-control-win64
+
+on:
+  push:
+    branches: [feature/external-control]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build only XMEye external interface plugin
+        run: |
+          mkdir -p out
+          docker run --rm \
+            --user 0:0 \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            registry.videolan.org/vlc-debian-win64-3.0:20260820114402 \
+            bash -lc '
+              set -eux
+              rm -rf vlc-build
+              git clone --depth 1 --branch 3.0.24 https://github.com/videolan/vlc.git vlc-build
+              cp src/xmeye_control_win32.c vlc-build/modules/control/win_msg.c
+              cd vlc-build
+              export VLC_PREBUILT_CONTRIBS_URL=https://artifacts.videolan.org/vlc-3.0/win64/vlc-contrib-x86_64-w64-mingw32-910cc9cada6080dd777fbafb2ebdd0c24f702c30.tar.zst
+              python3 ../ci/add_external_control_preflight.py extras/package/win32/build.sh
+              extras/package/win32/build.sh -a x86_64 -p
+              DLL=$(find . -type f -name libwin_msg_plugin.dll | head -n 1)
+              test -n "$DLL"
+              echo "External control plugin: $DLL"
+              x86_64-w64-mingw32-strip --strip-unneeded "$DLL" || true
+              mv "$DLL" /work/out/libxmeyecontrol_plugin.dll
+            '
+
+      - name: Record build metadata
+        run: |
+          sha256sum out/libxmeyecontrol_plugin.dll > out/SHA256SUMS.txt
+          printf 'VLC base: 3.0.24\nVariant: external Win32 floating control\nInstall: plugins/control/libxmeyecontrol_plugin.dll\nShortcut: xmeyecontrol\nAuthor: Álvaro Ibarz - https://github.com/aibarz\n' > out/BUILD-INFO.txt
+
+      - name: Upload external control plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: vlc-3.0.24-xmeye-external-control-win64
+          path: out/
