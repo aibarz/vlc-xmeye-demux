@@ -1,5 +1,5 @@
 diff --git a/modules/gui/qt/dialogs/extended.cpp b/modules/gui/qt/dialogs/extended.cpp
-index 4562a0e..718f858 100644
+index 4562a0e..bcfd1aa 100644
 --- a/modules/gui/qt/dialogs/extended.cpp
 +++ b/modules/gui/qt/dialogs/extended.cpp
 @@ -31,12 +31,259 @@
@@ -127,10 +127,10 @@ index 4562a0e..718f858 100644
 +        changedSlider = new QSlider( Qt::Horizontal, gate ); changedSlider->setRange(0,50); changedSlider->setValue(8); changedSlider->setTickInterval(1);
 +        prevSlider = new QSlider( Qt::Horizontal, gate ); prevSlider->setRange(0,60); prevSlider->setValue(50); prevSlider->setTickInterval(1);
 +        int r=0;
-+        g->addWidget(new QLabel(qtr("Bloque")),r,0); g->addWidget(block,r,1); g->addWidget(new QLabel(qtr("Muestreo")),r,2); g->addWidget(sample,r,3); g->addWidget(new QLabel(qtr("MAD estático")),r,4); g->addWidget(staticMad,r,5); r++;
-+        g->addWidget(new QLabel(qtr("Δ muestra")),r,0); g->addWidget(changedThr,r,1); g->addWidget(new QLabel(qtr("% cambiado")),r,2); g->addWidget(changedPct,r,3); g->addWidget(changedSlider,r,4,1,2); r++;
-+        g->addWidget(new QLabel(qtr("Δ píxel")),r,0); g->addWidget(pixelThr,r,1); g->addWidget(new QLabel(qtr("Protección bloques")),r,2); g->addWidget(dilate,r,3); r++;
-+        g->addWidget(new QLabel(qtr("Peso frame anterior")),r,0,1,2); g->addWidget(prevWeight,r,2); g->addWidget(prevSlider,r,3,1,3); r++;
++        g->addWidget(new QLabel(qtr("Bloque [8,32] {16}")),r,0); g->addWidget(block,r,1); g->addWidget(new QLabel(qtr("Muestreo [1,4] {2}")),r,2); g->addWidget(sample,r,3); g->addWidget(new QLabel(qtr("MAD estático [0,16] {2}")),r,4); g->addWidget(staticMad,r,5); r++;
++        g->addWidget(new QLabel(qtr("Δ muestra [1,32] {4}")),r,0); g->addWidget(changedThr,r,1); g->addWidget(new QLabel(qtr("% cambiado [0,50] {8}")),r,2); g->addWidget(changedPct,r,3); g->addWidget(changedSlider,r,4,1,2); r++;
++        g->addWidget(new QLabel(qtr("Δ píxel [1,32] {2}")),r,0); g->addWidget(pixelThr,r,1); g->addWidget(new QLabel(qtr("Protección [0,2] {1}")),r,2); g->addWidget(dilate,r,3); r++;
++        g->addWidget(new QLabel(qtr("Peso anterior [0,60] {50}")),r,0,1,2); g->addWidget(prevWeight,r,2); g->addWidget(prevSlider,r,3,1,3); r++;
 +        QPushButton *preset = new QPushButton( qtr("Preset de referencia 8%"), gate ); g->addWidget(preset,r,0,1,3);
 +        QLabel *hint = new QLabel( qtr("Los cambios se aplican en vivo. 8% es la referencia actual."), gate ); g->addWidget(hint,r,3,1,3);
 +        layout->addWidget( gate );
@@ -138,24 +138,24 @@ index 4562a0e..718f858 100644
 +        deblock = new QGroupBox( qtr("Deblock"), body ); deblock->setCheckable(true); deblock->setChecked(xmeyeFilterEnabled(p_intf,"xmeyedeblock"));
 +        QGridLayout *db = new QGridLayout(deblock);
 +        dbGrid=xmeyeSpin(4,32,8,deblock); dbThr=xmeyeSpin(1,32,8,deblock); dbSide=xmeyeSpin(0,24,4,deblock); dbStrength=xmeyeSpin(0,100,35,deblock,"%"); dbDelta=xmeyeSpin(1,8,2,deblock);
-+        db->addWidget(new QLabel(qtr("Grid")),0,0); db->addWidget(dbGrid,0,1); db->addWidget(new QLabel(qtr("Umbral")),0,2); db->addWidget(dbThr,0,3); db->addWidget(new QLabel(qtr("Lateral")),0,4); db->addWidget(dbSide,0,5);
-+        db->addWidget(new QLabel(qtr("Fuerza")),1,0); db->addWidget(dbStrength,1,1); db->addWidget(new QLabel(qtr("Max Δ")),1,2); db->addWidget(dbDelta,1,3); layout->addWidget(deblock);
++        db->addWidget(new QLabel(qtr("Grid [4,32] {8}")),0,0); db->addWidget(dbGrid,0,1); db->addWidget(new QLabel(qtr("Umbral [1,32] {8}")),0,2); db->addWidget(dbThr,0,3); db->addWidget(new QLabel(qtr("Lateral [0,24] {4}")),0,4); db->addWidget(dbSide,0,5);
++        db->addWidget(new QLabel(qtr("Fuerza [0,100] {35}")),1,0); db->addWidget(dbStrength,1,1); db->addWidget(new QLabel(qtr("Max Δ [1,8] {2}")),1,2); db->addWidget(dbDelta,1,3); layout->addWidget(deblock);
 +
 +        deconv = new QGroupBox( qtr("Deconv / restauración de borde"), body ); deconv->setCheckable(true); deconv->setChecked(xmeyeFilterEnabled(p_intf,"xmeyedeconv"));
 +        QGridLayout *dc = new QGridLayout(deconv);
 +        dcStrength=xmeyeSpin(0,100,30,deconv,"%"); dcThr=xmeyeSpin(0,32,5,deconv); dcLimit=xmeyeSpin(1,32,5,deconv); dcPolarity=xmeyeSpin(-1,1,1,deconv);
-+        dc->addWidget(new QLabel(qtr("Fuerza")),0,0); dc->addWidget(dcStrength,0,1); dc->addWidget(new QLabel(qtr("Umbral")),0,2); dc->addWidget(dcThr,0,3); dc->addWidget(new QLabel(qtr("Límite")),0,4); dc->addWidget(dcLimit,0,5); dc->addWidget(new QLabel(qtr("Polaridad")),1,0); dc->addWidget(dcPolarity,1,1); layout->addWidget(deconv);
++        dc->addWidget(new QLabel(qtr("Fuerza [0,100] {30}")),0,0); dc->addWidget(dcStrength,0,1); dc->addWidget(new QLabel(qtr("Umbral [0,32] {5}")),0,2); dc->addWidget(dcThr,0,3); dc->addWidget(new QLabel(qtr("Límite [1,32] {5}")),0,4); dc->addWidget(dcLimit,0,5); dc->addWidget(new QLabel(qtr("Polaridad [-1,1] {1}")),1,0); dc->addWidget(dcPolarity,1,1); layout->addWidget(deconv);
 +
 +        gray = new QGroupBox( qtr("Gray Guard"), body ); gray->setCheckable(true); gray->setChecked(xmeyeFilterEnabled(p_intf,"xmeyegrayguard"));
 +        QGridLayout *gg = new QGridLayout(gray);
 +        grayAdaptive=new QCheckBox(qtr("Adaptativo"),gray); grayAdaptive->setChecked(true); grayStep=xmeyeSpin(2,32,8,gray); grayActivity=xmeyeSpin(0,32,3,gray); graySpread=xmeyeSpin(0,64,8,gray); grayRatio=xmeyeSpin(5,60,20,gray,"%"); grayMin=xmeyeSpin(0,255,32,gray); grayMax=xmeyeSpin(0,255,224,gray);
-+        gg->addWidget(grayAdaptive,0,0); gg->addWidget(new QLabel(qtr("Paso")),0,1); gg->addWidget(grayStep,0,2); gg->addWidget(new QLabel(qtr("Actividad")),0,3); gg->addWidget(grayActivity,0,4); gg->addWidget(new QLabel(qtr("Spread")),0,5); gg->addWidget(graySpread,0,6);
-+        gg->addWidget(new QLabel(qtr("Ratio")),1,0); gg->addWidget(grayRatio,1,1); gg->addWidget(new QLabel(qtr("Luma min")),1,2); gg->addWidget(grayMin,1,3); gg->addWidget(new QLabel(qtr("Luma max")),1,4); gg->addWidget(grayMax,1,5); layout->addWidget(gray);
++        gg->addWidget(grayAdaptive,0,0); gg->addWidget(new QLabel(qtr("Paso [2,32] {8}")),0,1); gg->addWidget(grayStep,0,2); gg->addWidget(new QLabel(qtr("Actividad [0,32] {3}")),0,3); gg->addWidget(grayActivity,0,4); gg->addWidget(new QLabel(qtr("Spread [0,64] {8}")),0,5); gg->addWidget(graySpread,0,6);
++        gg->addWidget(new QLabel(qtr("Ratio [5,60] {20}")),1,0); gg->addWidget(grayRatio,1,1); gg->addWidget(new QLabel(qtr("Luma min [0,255] {32}")),1,2); gg->addWidget(grayMin,1,3); gg->addWidget(new QLabel(qtr("Luma max [0,255] {224}")),1,4); gg->addWidget(grayMax,1,5); layout->addWidget(gray);
 +
 +        focus = new QGroupBox( qtr("Focus — experimental"), body ); focus->setCheckable(true); focus->setChecked(xmeyeFilterEnabled(p_intf,"xmeyefocus"));
 +        QGridLayout *fg = new QGridLayout(focus);
 +        focusStrength=xmeyeSpin(0,100,25,focus,"%"); focusActivity=xmeyeSpin(0,32,6,focus); focusLimit=xmeyeSpin(1,32,6,focus);
-+        fg->addWidget(new QLabel(qtr("Fuerza")),0,0); fg->addWidget(focusStrength,0,1); fg->addWidget(new QLabel(qtr("Actividad")),0,2); fg->addWidget(focusActivity,0,3); fg->addWidget(new QLabel(qtr("Límite")),0,4); fg->addWidget(focusLimit,0,5); layout->addWidget(focus);
++        fg->addWidget(new QLabel(qtr("Fuerza [0,100] {25}")),0,0); fg->addWidget(focusStrength,0,1); fg->addWidget(new QLabel(qtr("Actividad [0,32] {6}")),0,2); fg->addWidget(focusActivity,0,3); fg->addWidget(new QLabel(qtr("Límite [1,32] {6}")),0,4); fg->addWidget(focusLimit,0,5); layout->addWidget(focus);
 +
 +        layout->addStretch(1); scroll->setWidget(body); outer->addWidget(scroll);
 +
@@ -245,7 +245,7 @@ index 4562a0e..718f858 100644
 +    {
 +        QVBoxLayout *l=new QVBoxLayout(this); canvas=new XMEyeZoomCanvas(this); l->addWidget(canvas,1); zoomReadout=new QLabel("200%",this); QFont zf=zoomReadout->font(); zf.setPointSize(zf.pointSize()+8); zf.setBold(true); zoomReadout->setFont(zf); zoomReadout->setAlignment(Qt::AlignCenter); l->addWidget(zoomReadout); zoomScale=new XMEyeZoomScale(this); l->addWidget(zoomScale);
 +        QGridLayout *c=new QGridLayout; enabled=new QCheckBox(qtr("Zoom activo"),this); enabled->setChecked(true); zoomSlider=new QSlider(Qt::Horizontal,this); zoomSlider->setRange(100,800); zoomSlider->setValue(200); zoomSlider->setTickInterval(25); zoomSlider->setPageStep(25); zoomSpin=xmeyeSpin(100,800,200,this,"%"); xSpin=xmeyeSpin(0,100,50,this,"%"); ySpin=xmeyeSpin(0,100,50,this,"%"); wSpin=xmeyeSpin(16,10000,2592,this); hSpin=xmeyeSpin(16,10000,1944,this);
-+        c->addWidget(enabled,0,0); c->addWidget(new QLabel(qtr("Zoom")),0,1); c->addWidget(zoomSlider,0,2,1,4); c->addWidget(zoomSpin,0,6); c->addWidget(new QLabel(qtr("Centro X")),1,0); c->addWidget(xSpin,1,1); c->addWidget(new QLabel(qtr("Centro Y")),1,2); c->addWidget(ySpin,1,3); c->addWidget(new QLabel(qtr("Fuente W")),1,4); c->addWidget(wSpin,1,5); c->addWidget(new QLabel(qtr("H")),1,6); c->addWidget(hSpin,1,7);
++        c->addWidget(enabled,0,0); c->addWidget(new QLabel(qtr("Zoom [100,800] {200}")),0,1); c->addWidget(zoomSlider,0,2,1,4); c->addWidget(zoomSpin,0,6); c->addWidget(new QLabel(qtr("Centro X [0,100] {50}")),1,0); c->addWidget(xSpin,1,1); c->addWidget(new QLabel(qtr("Centro Y [0,100] {50}")),1,2); c->addWidget(ySpin,1,3); c->addWidget(new QLabel(qtr("Fuente W [16,10000] {2592}")),1,4); c->addWidget(wSpin,1,5); c->addWidget(new QLabel(qtr("H [16,10000] {1944}")),1,6); c->addWidget(hSpin,1,7);
 +        QPushButton *save=new QPushButton(qtr("Guardar posición"),this),*restore=new QPushButton(qtr("Recuperar"),this),*center=new QPushButton(qtr("Centrar"),this); c->addWidget(save,2,0,1,2); c->addWidget(restore,2,2,1,2); c->addWidget(center,2,4,1,2); l->addLayout(c);
 +        QLabel *help=new QLabel(qtr("Arrastra el rectángulo grande para mover el centro. El zoom y la posición se aplican en vivo."),this); help->setWordWrap(true); l->addWidget(help);
 +        connect(zoomSlider,&QSlider::valueChanged,zoomSpin,&QSpinBox::setValue); connect(zoomSpin,QOverload<int>::of(&QSpinBox::valueChanged),zoomSlider,&QSlider::setValue); zoomScale->setCallback([this](int v){zoomSpin->setValue(v);});
@@ -262,7 +262,7 @@ index 4562a0e..718f858 100644
  
  ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
                 : QVLCDialog( (QWidget*)_p_intf->p_sys->p_mi, _p_intf )
-@@ -110,6 +357,23 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
+@@ -110,6 +357,28 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
      syncW = new SyncControls( p_intf, videoTab );
      mainTabW->insertTab( SYNCHRO_TAB, syncW, qtr( "Synchronization" ) );
  
@@ -275,12 +275,17 @@ index 4562a0e..718f858 100644
 +    xmeyeTabs->addTab( xmeyePanel, qtr( "Ajuste" ) );
 +    xmeyeTabs->addTab( xmeyeZoomPanel, qtr( "Zoom" ) );
 +    xmeyeLayout->addWidget( xmeyeTabs );
++    QHBoxLayout *xmeyeFooter = new QHBoxLayout;
++    QLabel *xmeyeLegend = new QLabel( qtr("[min,max] rango permitido · {x} valor por defecto · X/Y se limitan físicamente según el zoom"), xmeyeWidget );
++    xmeyeLegend->setStyleSheet( "font-size: 9px; color: #777; margin: 1px 0 2px 4px;" );
 +    QLabel *xmeyeCredit = new QLabel( "<a href=\"https://github.com/aibarz\">Álvaro Ibarz · GitHub</a>", xmeyeWidget );
 +    xmeyeCredit->setTextFormat( Qt::RichText );
 +    xmeyeCredit->setOpenExternalLinks( true );
 +    xmeyeCredit->setAlignment( Qt::AlignRight );
-+    xmeyeCredit->setStyleSheet( "font-size: 9px; color: #777; margin: 1px 4px 2px 0;" );
-+    xmeyeLayout->addWidget( xmeyeCredit );
++    xmeyeCredit->setStyleSheet( "font-size: 9px; color: #777; margin: 1px 4px 2px 8px;" );
++    xmeyeFooter->addWidget( xmeyeLegend, 1 );
++    xmeyeFooter->addWidget( xmeyeCredit, 0 );
++    xmeyeLayout->addLayout( xmeyeFooter );
 +    mainTabW->insertTab( XMEYE_TAB, xmeyeWidget, qtr( "XMEye" ) );
 +
      if( module_exists( "v4l2" ) )
