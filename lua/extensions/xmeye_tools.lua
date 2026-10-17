@@ -240,6 +240,7 @@ function activate()
     dlg:add_button("Centrar zoom", center_zoom, 1, 14, 2, 1)
 
     status = dlg:add_label("Listo. Los cambios se aplican al vídeo activo.", 1, 16, 4, 1)
+    dlg:add_label("Álvaro Ibarz · github.com/aibarz", 1, 18, 4, 1)
     dlg:show()
 end
 
