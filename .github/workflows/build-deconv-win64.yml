@@ -2,7 +2,7 @@ name: build-deconv-win64
 
 on:
   push:
-    branches: [feature/deconvolution-filter]
+    branches: [feature/deconvolution-filter, fix/live-filter-parameters]
   workflow_dispatch:
 
 jobs:

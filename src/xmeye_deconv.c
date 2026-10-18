@@ -21,6 +21,10 @@
 
 #define FILTER_PREFIX "xmeyedeconv-"
 
+static const char *const filter_options[] = {
+    "enabled", "strength", "threshold", "correction-limit", "polarity", NULL
+};
+
 struct filter_sys_t
 {
     atomic_int enabled;
@@ -76,6 +80,7 @@ static int Create(vlc_object_t *obj)
     }
 
     filter->p_sys = sys;
+    config_ChainParse(filter, FILTER_PREFIX, filter_options, filter->p_cfg);
     atomic_init(&sys->enabled,
                 var_CreateGetBoolCommand(filter, FILTER_PREFIX "enabled") ? 1 : 0);
     atomic_init(&sys->strength,

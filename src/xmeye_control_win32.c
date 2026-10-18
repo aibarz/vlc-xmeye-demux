@@ -205,9 +205,15 @@ static vout_thread_t *current_vout(intf_thread_t *intf)
     return vout;
 }
 
+/* Treat module{key=value,...} as the same module as plain module so
+ * enabling/disabling and UI synchronization work with inline filter config. */
 static bool token_equals(const char *begin, size_t len, const char *name)
 {
-    return strlen(name) == len && !memcmp(begin, name, len);
+    size_t n = strlen(name);
+    if (len == n)
+        return !memcmp(begin, name, n);
+    return len > n + 2 && !memcmp(begin, name, n) &&
+           begin[n] == '{' && begin[len - 1] == '}';
 }
 
 static bool chain_has(const char *chain, const char *name)
@@ -427,6 +433,121 @@ static void apply_filter_switch(intf_thread_t *intf, int id)
     }
 }
 
+/* The active VLC video-filter objects own their parameters. Writing the
+ * playlist/vout variables alone does not fire callbacks on those objects.
+ * Apply changes by passing inline settings through VLC's filter-chain parser,
+ * rebuilding ONCE only if the desired chain actually changed.
+ * All string operations are bounded; no frame data are read or stored. */
+static void apply_live_filter_options(intf_thread_t *intf, HWND w)
+{
+    const char *names[] = {
+        "xmeyegate", "xmeyedeblock", "xmeyedeconv",
+        "xmeyegrayguard", "xmeyefocus"
+    };
+    char settings[5][256];
+
+    snprintf(settings[0], sizeof(settings[0]),
+             "xmeyegate{enabled=1,block-size=%d,motion-threshold=%d,"
+             "max-changed-percent=%d,max-prev-weight=%d}",
+             edit_int(w, ID_GATE_BLOCK, 16, 8, 32),
+             edit_int(w, ID_GATE_MOTION, 4, 1, 32),
+             edit_int(w, ID_GATE_CHANGED, 8, 0, 50),
+             edit_int(w, ID_GATE_PREV, 50, 0, 60));
+    snprintf(settings[1], sizeof(settings[1]),
+             "xmeyedeblock{enabled=1,grid=%d,threshold=%d,strength=%d}",
+             edit_int(w, ID_DB_GRID, 8, 4, 32),
+             edit_int(w, ID_DB_THR, 8, 1, 32),
+             edit_int(w, ID_DB_STRENGTH, 35, 0, 100));
+    snprintf(settings[2], sizeof(settings[2]),
+             "xmeyedeconv{enabled=1,strength=%d,threshold=%d,correction-limit=%d}",
+             edit_int(w, ID_DC_STRENGTH, 30, 0, 100),
+             edit_int(w, ID_DC_THR, 5, 0, 32),
+             edit_int(w, ID_DC_LIMIT, 5, 1, 32));
+    snprintf(settings[3], sizeof(settings[3]),
+             "xmeyegrayguard{enabled=1,adaptive=1,sample-step=%d,"
+             "flat-activity=%d,ratio-percent=%d}",
+             edit_int(w, ID_GRAY_STEP, 8, 2, 32),
+             edit_int(w, ID_GRAY_ACTIVITY, 3, 0, 32),
+             edit_int(w, ID_GRAY_RATIO, 20, 5, 60));
+    snprintf(settings[4], sizeof(settings[4]),
+             "xmeyefocus{enabled=1,strength=%d,activity-threshold=%d,"
+             "correction-limit=%d}",
+             edit_int(w, ID_FOCUS_STRENGTH, 25, 0, 100),
+             edit_int(w, ID_FOCUS_ACTIVITY, 6, 0, 32),
+             edit_int(w, ID_FOCUS_LIMIT, 6, 1, 32));
+
+    playlist_t *playlist = pl_Get(intf);
+    char *old = var_GetString(playlist, "video-filter");
+    if (!old)
+        return;
+    /* Each XMEye replacement is bounded to 255 bytes; account for all 5. */
+    const size_t cap = strlen(old) + sizeof(settings) + 16;
+    char *next = malloc(cap);
+    if (!next)
+    {
+        free(old);
+        return;
+    }
+    char *dst = next;
+    size_t available = cap;
+    const char *p = old;
+    while (*p)
+    {
+        const char *end = strchr(p, ':');
+        const size_t len = end ? (size_t)(end - p) : strlen(p);
+        const char *token = p;
+        size_t token_len = len;
+        for (size_t i = 0; i < 5; ++i)
+            if (token_equals(p, len, names[i]))
+            {
+                token = settings[i];
+                token_len = strlen(token);
+                break;
+            }
+
+        if (len)
+        {
+            size_t sep = (dst != next) ? 1 : 0;
+            if (token_len + sep + 1 > available)
+            {
+                free(old);
+                free(next);
+                return;
+            }
+            if (sep)
+            {
+                *dst++ = ':';
+                --available;
+            }
+            memcpy(dst, token, token_len);
+            dst += token_len;
+            available -= token_len;
+        }
+        if (!end)
+            break;
+        p = end + 1;
+    }
+    *dst = '\0';
+    char *ordered = adjust_last(next);
+    free(next);
+    if (ordered)
+    {
+        if (strcmp(old, ordered))
+            var_SetString(playlist, "video-filter", ordered);
+        vout_thread_t *vout = current_vout(intf);
+        if (vout)
+        {
+            char *active = var_GetString(vout, "video-filter");
+            if (!active || strcmp(active, ordered))
+                var_SetString(vout, "video-filter", ordered);
+            free(active);
+            vlc_object_release(vout);
+        }
+        free(ordered);
+    }
+    free(old);
+}
+
 static void apply_values(intf_thread_t *intf)
 {
     HWND w = intf->p_sys->window;
@@ -458,7 +579,8 @@ static void apply_values(intf_thread_t *intf)
     set_option_int(intf, "xmeyefocus-activity-threshold", edit_int(w, ID_FOCUS_ACTIVITY, 6, 0, 32));
     set_option_int(intf, "xmeyefocus-correction-limit", edit_int(w, ID_FOCUS_LIMIT, 6, 1, 32));
 
-    status_text(intf->p_sys, L"Valores XMEye aplicados.");
+    apply_live_filter_options(intf, w);
+    status_text(intf->p_sys, L"Valores enviados a la cadena de filtros activos.");
 }
 
 static void apply_zoom(intf_thread_t *intf)
