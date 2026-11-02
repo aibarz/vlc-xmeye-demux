@@ -83,3 +83,8 @@ No private camera recordings, passwords or personal visual/audio data are includ
 ---
 
 **Proyecto / Project:** [vlc-xmeye-demux](https://github.com/aibarz/vlc-xmeye-demux) · Public source, versioned development · Windows x64 target.
+
+
+## Control de versiones y despliegues
+
+**Norma transversal:** [Protocolo de versionado por commit, build ID, manifiesto SHA-256 y recibo de verificación](https://github.com/aibarz/directrices-chatgpt/blob/main/PROTOCOLO_VERSIONADO_DESPLIEGUES.md). Una versión mencionada en el README o una PR no prueba la versión instalada en T520/ASUS/HP6200. Consultar [inventario histórico verificable](https://github.com/aibarz/directrices-chatgpt/blob/main/INVENTARIO_VERSIONES.md). Despliegues futuros deben asignar nueva identidad de build si cambia cualquier artefacto y verificar hashes en destino. **Aplicación automática pendiente**: este enlace no certifica instalaciones ni modifica ejecutables.
